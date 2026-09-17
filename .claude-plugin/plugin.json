@@ -1,6 +1,6 @@
 {
   "name": "pennyblack",
-  "description": "Send a physical letter in the UK from Claude Code or Codex - markdown or a PDF in, printed and posted via Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, returns the Royal Mail tracking number, and prices every letter before you commit to it. No dependencies, no minimum order.",
+  "description": "Put a PDF in the post. Printed in the UK and delivered by Royal Mail, with Signed For, Tracked 24/48 and Special Delivery, the real tracking number returned, and every letter priced and previewed before you commit to it. Posts your PDF exactly as it is - no conversion. No dependencies, no minimum order.",
   "version": "0.1.0",
   "author": {
     "name": "DBHQ",
@@ -15,6 +15,7 @@
     "royal-mail",
     "hybrid-mail",
     "direct-mail",
+    "pdf",
     "signed-for",
     "recorded-delivery",
     "special-delivery",

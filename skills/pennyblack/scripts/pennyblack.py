@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config as cfg  # noqa: E402
 import providers  # noqa: E402
-import render  # noqa: E402
 from providers.base import Address, EVIDENCE_SERVICES, SERVICES  # noqa: E402
 
 
@@ -134,16 +133,24 @@ def cmd_services(args):
 
 
 def _read_source(args):
-    """Return either HTML content or a Path to a PDF."""
+    """Return the Path to the PDF that will be posted.
+
+    pennyblack posts a document you already have, exactly as it is. It does not
+    typeset anything, because a tool that silently reflows a letter is a tool
+    that can change what a letter says on the page.
+    """
     path = Path(args.source)
     if not path.exists():
         fail(f"no such file: {path}")
-    if path.suffix.lower() == ".pdf":
-        return path
-    text = path.read_text(encoding="utf-8")
-    if not text.strip():
+    if path.suffix.lower() != ".pdf":
+        fail(
+            f"pennyblack posts PDFs, and {path.name} is not one.\n"
+            "  Export or print your document to PDF first, then send that.\n"
+            "  What you see in the PDF is exactly what comes out of the envelope."
+        )
+    if path.stat().st_size == 0:
         fail(f"{path} is empty")
-    return render.prepare(text, title=args.reference or path.stem)
+    return path
 
 
 def _parse_recipient(args):
@@ -330,18 +337,26 @@ def build_parser():
         epilog="Drafts cost nothing. 'send' is the step that spends money.",
     )
     p.add_argument("--json", action="store_true", help="machine-readable output")
+
+    # --json is accepted either before or after the subcommand. People write
+    # `pennyblack draft x.pdf --json` far more often than the other way round,
+    # and argparse does not allow that unless every subparser declares it too.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("setup", help="store your API key")
+    s = sub.add_parser("setup", parents=[common], help="store your API key")
     s.add_argument("--api-key")
     s.add_argument("--provider", default=cfg.DEFAULT_PROVIDER)
     s.set_defaults(func=cmd_setup)
 
-    s = sub.add_parser("services", help="list postage services and what each proves")
+    s = sub.add_parser("services", parents=[common], help="list postage services and what each proves")
     s.set_defaults(func=cmd_services)
 
-    s = sub.add_parser("draft", help="create and price a letter without sending it")
-    s.add_argument("source", help="a .md, .txt, .html or .pdf file")
+    s = sub.add_parser("draft", parents=[common], help="create and price a letter without sending it")
+    s.add_argument("source", help="the PDF to post")
     s.add_argument("--service", default="second",
                    help="postage service (default: second). See: pennyblack services")
     s.add_argument("--name", help="recipient name")
@@ -361,20 +376,20 @@ def build_parser():
                    help="create a real draft rather than a test one")
     s.set_defaults(func=cmd_draft)
 
-    s = sub.add_parser("send", help="confirm a draft - this posts it and charges you")
+    s = sub.add_parser("send", parents=[common], help="confirm a draft - this posts it and charges you")
     s.add_argument("id")
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     s.set_defaults(func=cmd_send)
 
-    s = sub.add_parser("status", help="status and tracking number for a job")
+    s = sub.add_parser("status", parents=[common], help="status and tracking number for a job")
     s.add_argument("id")
     s.set_defaults(func=cmd_status)
 
-    s = sub.add_parser("cancel", help="throw away an unconfirmed draft")
+    s = sub.add_parser("cancel", parents=[common], help="throw away an unconfirmed draft")
     s.add_argument("id")
     s.set_defaults(func=cmd_cancel)
 
-    s = sub.add_parser("log", help="what this machine has posted")
+    s = sub.add_parser("log", parents=[common], help="what this machine has posted")
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=cmd_log)
 

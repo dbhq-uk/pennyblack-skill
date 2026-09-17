@@ -19,6 +19,8 @@ No network and no account are needed. The provider is stubbed.
   `draft` and `send` is the whole safety story. A pull request that adds a
   `--send-now` shortcut will be declined, however convenient.
 - **Do not weaken the default.** Drafts are test mode until `--live`.
+- **Do not add document conversion.** pennyblack takes a PDF and posts it. A
+  markdown renderer existed and was removed on purpose - see AGENTS.md.
 - **Money arithmetic stays in one place.** `_money()` in the provider is the
   only function that knows about the cost divisor. It is tested against the
   published rate card.

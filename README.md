@@ -2,7 +2,7 @@
 
 # pennyblack
 
-**Send a real letter, from your agent.**
+**Put a PDF in the post.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
@@ -14,31 +14,34 @@ A free, open-source tool by [DBHQ](https://dbhq.uk)
 
 ---
 
-Markdown goes in. Paper comes out of a print facility in Leeds, and Royal Mail
+A PDF goes in. Paper comes out of a print facility in Leeds, and Royal Mail
 carries it to a letterbox.
 
 pennyblack is a Claude Code and Codex skill for posting physical letters in the
 UK - including **Signed For**, **Tracked 24/48** and **Special Delivery** - and
 it hands you back the real Royal Mail tracking number.
 
+It posts your PDF **exactly as it is**. No conversion, no typesetting, no
+reflowing. What you see in the PDF is what comes out of the envelope.
+
 Named after the Penny Black, the 1840 stamp that made it possible to pay once
 and have a letter carried anywhere.
 
 ```bash
 # 1. Draft it. Free. Nothing is printed.
-pennyblack draft notice.md --name "Acme Ltd" \
+pennyblack draft notice.pdf --name "Acme Ltd" \
   --line "1 High Street, Leeds" --postcode "LS1 1AA" \
   --service signed --live
 
-#   draft      prt_7c1e4b2a
+#   draft      print_YheDXex1cHsyD9xosrgZu
 #   to         Acme Ltd
 #   service    Royal Mail Signed For 1st Class
 #   pages      1 on 1 sheet(s)
-#   cost       £4.34 inc VAT (£3.62 + VAT)
+#   cost       £5.21 inc VAT (£4.34 + VAT)
 #   preview    https://... (signed link, expires in about an hour)
 
 # 2. Look at the preview. Then, and only then:
-pennyblack send prt_7c1e4b2a
+pennyblack send print_YheDXex1cHsyD9xosrgZu
 ```
 
 ## Why it is built this way
@@ -117,27 +120,27 @@ what you send.
 |---|---|
 | `setup` | store your API key |
 | `services` | list postage options and what each one actually proves |
-| `draft <file>` | create and price a letter. Free. Nothing is printed |
+| `draft <file.pdf>` | upload and price a letter. Free. Nothing is printed |
 | `send <id>` | commit a draft. **This posts it and charges you** |
 | `cancel <id>` | throw away an unconfirmed draft |
 | `status <id>` | status and Royal Mail tracking number |
 | `log` | what this machine has posted, with costs and tracking numbers |
 
-Add `--json` to any of them for machine-readable output.
+Add `--json` to any of them for machine-readable output, before or after the
+subcommand.
 
 Every confirmed send is appended to `~/.dbhq/pennyblack/sent.jsonl`. A tracking
 number that only exists in a vendor dashboard is no use when someone asks in six
 months whether a letter went.
 
-## Input formats
+## Input
 
-- **Markdown** - headings, bold, italic, lists and rules. A single newline is a
-  line break, so sign-off blocks keep their shape.
-- **HTML** - passed through untouched if the file starts with a doctype.
-- **PDF** - printed as-is, no conversion.
+**PDF, and only PDF.** Export or print your document to PDF first, then send
+that. pennyblack does not convert anything, because a tool that silently reflows
+a letter is a tool that can change what the letter says on the page.
 
-Letterheads are applied by the provider at print time via `--background-first`
-and `--background-other`, so your markdown carries no branding.
+Letterheads, if your account has one uploaded, are applied by the provider at
+print time behind your PDF via `--background-first` and `--background-other`.
 
 ## Provider
 

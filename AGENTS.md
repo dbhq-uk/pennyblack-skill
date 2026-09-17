@@ -41,12 +41,14 @@ returns money as an integer scaled by 100,000,000 - not 100. Getting this wrong
 understates a letter by a factor of a million, and it is invisible in test mode
 because test mode costs nothing either way. All conversion goes through
 `_money()` in `providers/intelliprint.py`, which is tested against the published
-rate card (£3.51, £0.84, £4.34).
+rate card (£3.51, £0.84, £4.34 - all excluding VAT).
 
-**The renderer must never lose a sentence.** It converts a subset of markdown
-and passes through what it does not understand as plain text. The worst
-acceptable outcome is a letter that looks plainer than intended. A letter that
-is missing a paragraph is not acceptable. See `test_no_content_is_dropped`.
+**pennyblack posts PDFs and does not convert anything.** There was a markdown
+renderer; it was removed on 17 September 2026, deliberately. A tool that
+reflows a document before printing it can change what the document says on the
+page, and the user never sees the difference until it is in an envelope. If a
+future change reintroduces conversion, the preview step stops being a guarantee
+and becomes a hope.
 
 **Standard library only.** Python 3.9 floor. No dependencies, no virtualenv, no
 build step. This is a hard constraint, not a preference - a skill that needs
@@ -60,7 +62,6 @@ skills/pennyblack/
   scripts/
     pennyblack.py              CLI, safety rails, output
     config.py                  ~/.dbhq/pennyblack/ - key at 600, dir at 700
-    render.py                  markdown -> HTML letter
     providers/
       base.py                  the interface + the postage vocabulary
       intelliprint.py          every Intelliprint-specific fact

@@ -131,9 +131,10 @@ class Intelliprint(Provider):
         super().__init__(config)
         self.api_key = config["api_key"]
         self.base = config.get("api_base", API_BASE).rstrip("/")
-        # The spec declares HTTP bearer auth; the vendor's own cURL sample sends
-        # the bare key. We try bearer, then fall back once on 401, and remember
-        # which worked for the rest of the process.
+        # Bearer is correct - confirmed against the live API on 2026-09-17, and
+        # it is what the OpenAPI security scheme declares. The vendor's own cURL
+        # sample sends the bare key instead, so the fallback below stays as a
+        # cheap hedge in case they change their minds.
         self._auth_style = config.get("auth_style", "bearer")
 
     # -- transport ---------------------------------------------------------
