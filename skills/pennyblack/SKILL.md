@@ -52,7 +52,8 @@ rehearsed for nothing.
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" draft invoice.pdf \
   --name "Acme Ltd" \
-  --line "1 High Street, Leeds" \
+  --line "1 High Street" \
+  --line "Leeds" \
   --postcode "LS1 1AA" \
   --service signed \
   --reference "Acme - March invoice" \
@@ -152,7 +153,10 @@ public one. The README written into the folder says so and gives the
 - `--single-sided` - default is double-sided, which is cheaper.
 - `--black-and-white` - colour is standard and included; this is for preference.
 - `--confidential` - hides the contents from other users of the account dashboard.
-- `--to-file recipients.json` - `{"name":..., "line":..., "postcode":...}` or a list.
+- `--line` - **one per address line, repeated.** The print house prints each on its own
+  line in the envelope window; a single comma-joined string prints as one long line and
+  wraps mid-address. Never put the postcode in it - that is `--postcode`.
+- `--to-file recipients.json` - `{"name":..., "line": "..." or ["...", "..."], "postcode":...}` or a list.
 - `--background-first` / `--background-other` - letterhead ids, if the account
   has backgrounds uploaded. Applied at print time, behind the PDF.
 - `--json` - machine-readable output, before or after the subcommand.

@@ -154,6 +154,21 @@ def _read_source(args):
     return path
 
 
+def _join_lines(value):
+    """Address lines as one newline-separated string.
+
+    The print house honours line breaks in the address field and prints each on
+    its own line in the envelope window. A single comma-joined string prints as
+    one long line and wraps mid-address, so accept a list (repeated --line, or a
+    JSON list) and join it here.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return "\n".join(str(v).strip() for v in value if str(v).strip())
+    return str(value)
+
+
 def _parse_recipient(args):
     if args.to_file:
         data = json.loads(Path(args.to_file).read_text(encoding="utf-8"))
@@ -162,7 +177,7 @@ def _parse_recipient(args):
         for e in entries:
             addr = Address(
                 name=e.get("name", ""),
-                line=e.get("line", ""),
+                line=_join_lines(e.get("line", "")),
                 postcode=e.get("postcode", ""),
                 country=e.get("country", "GB"),
             )
@@ -176,7 +191,7 @@ def _parse_recipient(args):
             "a recipient needs --name, --line and --postcode (or --to-file with JSON).\n"
             f"  missing: {', '.join(missing)}"
         )
-    addr = Address(name=args.name, line=args.line, postcode=args.postcode,
+    addr = Address(name=args.name, line=_join_lines(args.line), postcode=args.postcode,
                    country=args.country)
     addr.validate()
     return [addr]
@@ -397,7 +412,9 @@ def build_parser():
     s.add_argument("--service", default="second",
                    help="postage service (default: second). See: pennyblack services")
     s.add_argument("--name", help="recipient name")
-    s.add_argument("--line", help="recipient address, without the postcode")
+    s.add_argument("--line", action="append",
+                   help="one address line, without the postcode - repeat for each line, "
+                        "e.g. --line \"PO Box 12626\" --line \"Harlow\"")
     s.add_argument("--postcode", help="recipient postcode")
     s.add_argument("--country", default="GB", help="ISO country code (default: GB)")
     s.add_argument("--to-file", help="JSON file with one recipient or a list of them")

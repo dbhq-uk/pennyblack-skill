@@ -30,7 +30,7 @@ and have a letter carried anywhere.
 ```bash
 # 1. Draft it. Free. Nothing is printed.
 pennyblack draft notice.pdf --name "Acme Ltd" \
-  --line "1 High Street, Leeds" --postcode "LS1 1AA" \
+  --line "1 High Street" --line "Leeds" --postcode "LS1 1AA" \
   --service signed --live
 
 #   draft      print_YheDXex1cHsyD9xosrgZu
