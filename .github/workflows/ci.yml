@@ -1,0 +1,47 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
+        with:
+          # 3.9 is the floor the skill claims, so it is the version CI proves.
+          # Testing only on a newer interpreter would let a 3.10-only construct
+          # ship against a README that promises 3.9.
+          python-version: "3.9"
+      - name: tests
+        # Standard library only, no network and no account - which is the whole
+        # reason this can run on every push.
+        run: cd skills/pennyblack && python3 -m unittest discover -s tests
+
+      - name: shell scripts parse
+        run: |
+          fail=0
+          while IFS= read -r s; do
+            bash -n "$s" || { echo "Syntax error: $s"; fail=1; }
+          done < <({ find . -maxdepth 1 -name '*.sh'; find skills -name '*.sh'; })
+          exit $fail
+
+      - name: plugin manifest is valid JSON
+        run: jq empty .claude-plugin/plugin.json
+
+      - name: no em dashes
+        run: |
+          if grep -rInP '[\x{2014}\x{2013}]' --include='*.md' --include='*.py' .; then
+            echo "em or en dash found"; exit 1
+          fi
+
+      - name: draft and send stay separate commands
+        # THE ONE CONSTRAINT THIS SKILL CANNOT LOSE. Physical post is not
+        # recallable and every send costs money, so there is deliberately no
+        # command that writes and posts in one go. Two unit tests already assert
+        # it; this asserts that nobody adds a third verb that collapses them.
+        run: |
+          if grep -rInE 'def (cmd_)?(draft_and_send|send_now|post_now|oneshot)' \
+               --include='*.py' skills/pennyblack/scripts; then
+            echo "a one-shot draft-and-send command has appeared"; exit 1
+          fi
