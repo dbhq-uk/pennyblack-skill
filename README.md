@@ -129,9 +129,35 @@ what you send.
 Add `--json` to any of them for machine-readable output, before or after the
 subcommand.
 
-Every confirmed send is appended to `~/.dbhq/pennyblack/sent.jsonl`. A tracking
-number that only exists in a vendor dashboard is no use when someone asks in six
-months whether a letter went.
+## The record
+
+Every confirmed send is written to **`.pennyblack/` at the root of your git
+repository**, not to a dotfile in `$HOME`. Credentials are machine state; a
+record of what you have posted is a business record, and it belongs with the
+work where you can read, diff and grep it a year later.
+
+```
+.pennyblack/
+  sent.jsonl                             one line per letter, append-only
+  2026-09-17-acme-ltd-DpEfeInS.pdf       the document that was actually posted
+  README.md                              warns it holds names and addresses
+```
+
+**It keeps the PDF, not just a reference to one.** The provider's preview link
+is signed and expires within the hour, so the document is captured at the moment
+of sending or not at all. A tracking number proves something arrived; only the
+document proves what.
+
+`sent.jsonl` is append-only and one line per letter, so two sessions posting
+letters produce two lines and a merge conflict resolves by keeping both.
+`pennyblack log` renders it.
+
+Use `--log-dir` to keep a particular client's letters with the rest of their
+correspondence instead.
+
+> **If your repository is public**, add `.pennyblack/` to `.gitignore` and use
+> `--log-dir` to keep the record somewhere private. It holds names and postal
+> addresses. The README written into the folder repeats this.
 
 ## Input
 

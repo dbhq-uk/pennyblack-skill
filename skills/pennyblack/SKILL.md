@@ -118,10 +118,32 @@ Tracking numbers are issued for `signed`, `signed-second`, `tracked-24`,
 been dispatched, not at the moment of confirmation - so if `send` says "not
 issued yet", that is normal, and `status` will have it later.
 
-Every confirmed send is appended to `~/.dbhq/pennyblack/sent.jsonl` with its
-cost and tracking number. That local record is the point: a tracking number that
-exists only in a vendor dashboard is no use when somebody asks in six months
-whether a letter went.
+## The record
+
+Every confirmed send is written to **`.pennyblack/` at the root of the current
+git repository** - not to a dotfile in `$HOME`. A record of letters you have
+sent is a business record and belongs with the work, in version control.
+
+```
+.pennyblack/
+  sent.jsonl                             one line per letter, append-only
+  2026-09-17-acme-ltd-DpEfeInS.pdf       the document that was actually posted
+  README.md                              warns it holds names and addresses
+```
+
+**The PDF is captured at the moment of sending, because it cannot be recovered
+afterwards** - the provider's preview link is signed and expires within the
+hour. A tracking number proves something arrived; only the document proves what.
+
+`--log-dir` puts it somewhere else. Use it to file a client's letters with the
+rest of their correspondence rather than at the repo root.
+
+Only credentials live in `~/.dbhq/pennyblack/`.
+
+**Tell the user if the repository is public.** The record holds names and postal
+addresses, which is fine in a private repo and a personal-data disclosure in a
+public one. The README written into the folder says so and gives the
+`.gitignore` line.
 
 ## Useful flags
 

@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config as cfg  # noqa: E402
+import ledger  # noqa: E402
 import providers  # noqa: E402
 from providers.base import Address, EVIDENCE_SERVICES, SERVICES  # noqa: E402
 
@@ -239,8 +240,14 @@ def cmd_send(args):
         "id": draft.id,
         "provider": draft.provider,
         "service": draft.service,
+        "service_label": SERVICES.get(draft.service, {}).get("label", draft.service),
         "recipients": draft.recipients,
+        "addresses": [
+            l.get("address") for l in (draft.raw.get("letters") or [])
+            if l.get("address")
+        ],
         "cost_pence": draft.cost.total_pence,
+        "pages": draft.pages,
         "testmode": draft.testmode,
         "confirmed_at": draft.raw.get("confirmed_at"),
         "reference": draft.raw.get("reference"),
@@ -251,7 +258,14 @@ def cmd_send(args):
     ]
     if tracking:
         entry["tracking_numbers"] = tracking
-    cfg.record_sent(entry)
+
+    # Capture the document now or never - the preview link is signed and
+    # expires within the hour. A tracking number says something arrived; only
+    # this says what.
+    document = prov.fetch_document(draft)
+
+    log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+    written = ledger.record(entry, log_dir=log_dir, document=document)
 
     if args.json:
         return _out(entry, True)
@@ -270,7 +284,12 @@ def cmd_send(args):
     elif draft.service in EVIDENCE_SERVICES and not draft.testmode:
         print("  tracking   not issued yet - check again once it has been dispatched:")
         print(f"             pennyblack status {draft.id}")
-    print(f"  logged     {cfg.SENT_LOG}")
+    print(f"  recorded   {written['sent']}")
+    if written["document"]:
+        print(f"  document   {written['document'].name}")
+    else:
+        print("  document   NOT captured - the preview link did not return a PDF.")
+        print("             The letter went; the copy of it did not.")
     print()
     return draft
 
@@ -310,20 +329,38 @@ def cmd_cancel(args):
 
 
 def cmd_log(args):
-    entries = cfg.read_sent()
+    log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+    entries = ledger.read(log_dir)
     if args.json:
         return _out(entries, True)
     if not entries:
-        print(f"  nothing sent yet ({cfg.SENT_LOG} is empty)")
+        print(f"  nothing posted from this repository yet ({log_dir}/sent.jsonl)")
         return
+
+    import datetime as _dt
     print()
+    print(f"  {log_dir}")
+    print()
+    total = 0
     for e in entries[-args.limit:]:
-        mode = " [test]" if e.get("testmode") else ""
-        cost = e.get("cost_pence", 0) / 100
-        print(f"  {e.get('id','?')}{mode}  {', '.join(e.get('recipients') or [])}  "
-              f"{e.get('service','?')}  £{cost:.2f}")
+        mode = "  [test]" if e.get("testmode") else ""
+        pence = e.get("cost_pence", 0)
+        if not e.get("testmode"):
+            total += pence
+        when = e.get("confirmed_at")
+        date = (_dt.datetime.fromtimestamp(when, tz=_dt.timezone.utc).strftime("%d %b %Y")
+                if isinstance(when, (int, float)) and when else "")
+        print(f"  {date}  {', '.join(e.get('recipients') or ['?'])}{mode}")
+        print(f"    {e.get('service_label') or e.get('service','?')}  -  "
+              f"£{pence / 100:.2f}")
+        if e.get("reference"):
+            print(f"    ref      {e['reference']}")
         for t in e.get("tracking_numbers", []):
-            print(f"      tracking {t}")
+            print(f"    tracking {t}")
+        if e.get("document"):
+            print(f"    document {e['document']}")
+        print()
+    print(f"  {len(entries)} letter(s) recorded, £{total / 100:.2f} spent live")
     print()
 
 
@@ -379,6 +416,8 @@ def build_parser():
     s = sub.add_parser("send", parents=[common], help="confirm a draft - this posts it and charges you")
     s.add_argument("id")
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s.add_argument("--log-dir", help="where to keep the record "
+                   "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_send)
 
     s = sub.add_parser("status", parents=[common], help="status and tracking number for a job")
@@ -389,8 +428,10 @@ def build_parser():
     s.add_argument("id")
     s.set_defaults(func=cmd_cancel)
 
-    s = sub.add_parser("log", parents=[common], help="what this machine has posted")
+    s = sub.add_parser("log", parents=[common], help="what has been posted from this repository")
     s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--log-dir", help="where the record lives "
+                   "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_log)
 
     return p

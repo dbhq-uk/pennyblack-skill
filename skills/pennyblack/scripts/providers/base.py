@@ -168,3 +168,13 @@ class Provider:
     def status(self, print_id: str) -> list:
         """Return the Mailing objects for a print job."""
         raise NotImplementedError
+
+    def fetch_document(self, draft: Draft) -> bytes:
+        """Return the PDF of the letter as it was printed, or None.
+
+        Captured at the moment of sending and kept in the repository record.
+        A tracking number proves something arrived; only the document proves
+        what. Providers whose preview links are short-lived - which is most of
+        them - make this the only chance to keep it.
+        """
+        return None

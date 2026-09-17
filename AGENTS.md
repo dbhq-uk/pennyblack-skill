@@ -50,6 +50,19 @@ page, and the user never sees the difference until it is in an envelope. If a
 future change reintroduces conversion, the preview step stops being a guarantee
 and becomes a hope.
 
+**Credentials and the record live in different places, and must stay that way.**
+`config.py` owns `~/.dbhq/pennyblack/` and holds the API key and nothing else.
+`ledger.py` owns `.pennyblack/` in the user's git repository and holds what was
+posted. Two tests assert the separation. Putting the record back in `$HOME`
+would hide a business record in a dotfile; putting the key in the repository
+would commit it.
+
+**The document is captured at send time or never.** The provider's preview link
+is signed and short-lived. If a change defers fetching it, the record silently
+degrades to a tracking number, which proves something arrived but not what.
+A failed capture is reported, not swallowed - see the "NOT captured" branch in
+`cmd_send`.
+
 **Standard library only.** Python 3.9 floor. No dependencies, no virtualenv, no
 build step. This is a hard constraint, not a preference - a skill that needs
 `pip install` before it can post a letter will not be used.
@@ -62,6 +75,7 @@ skills/pennyblack/
   scripts/
     pennyblack.py              CLI, safety rails, output
     config.py                  ~/.dbhq/pennyblack/ - key at 600, dir at 700
+    ledger.py                  <git root>/.pennyblack/ - what was posted
     providers/
       base.py                  the interface + the postage vocabulary
       intelliprint.py          every Intelliprint-specific fact

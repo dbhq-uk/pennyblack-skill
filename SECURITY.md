@@ -20,9 +20,15 @@ states documents are deleted after printing. If you are sending something that
 must not leave your control, do not send it through a print bureau - that is
 true of every hybrid mail service, not just this one.
 
-**The send log** at `~/.dbhq/pennyblack/sent.jsonl` records recipient names,
-costs and tracking numbers. It does not record letter contents. It is mode 600.
-It may still be personal data under UK GDPR, so treat it accordingly.
+**The record** at `.pennyblack/` in your git repository holds recipient names,
+postal addresses, costs, tracking numbers **and a copy of every document you
+posted**. That is deliberate - it is the evidence that a letter was sent and of
+what it said - but it means the folder is personal data under UK GDPR, and in a
+public repository it is a disclosure.
+
+pennyblack writes a README into the folder saying so, with the `.gitignore` line
+to suppress it, and `--log-dir` moves the whole record somewhere private. It
+cannot tell whether your repository is public, so that judgement is yours.
 
 **Nothing is posted without an explicit `send`.** `draft` never prints or
 charges. This is the main safety property of the tool, and it is covered by

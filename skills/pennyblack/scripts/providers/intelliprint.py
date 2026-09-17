@@ -315,6 +315,23 @@ class Intelliprint(Provider):
     def retrieve(self, print_id: str) -> dict:
         return self._request("GET", f"/prints/{print_id}")
 
+    def fetch_document(self, draft: Draft) -> bytes:
+        """Download the preview PDF. Signed URL, valid about an hour, so this
+        has to happen at send time or not at all."""
+        url = draft.preview_url
+        if not url:
+            return None
+        try:
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("User-Agent", "pennyblack (+https://github.com/dbhq-uk/pennyblack-skill)")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+            return None
+        # A signed link that has expired returns an error page, not a PDF.
+        # Keeping that as evidence would be worse than keeping nothing.
+        return data if data[:5] == b"%PDF-" else None
+
     def status(self, print_id: str) -> list:
         payload = self.retrieve(print_id)
         out = []
