@@ -63,6 +63,13 @@ degrades to a tracking number, which proves something arrived but not what.
 A failed capture is reported, not swallowed - see the "NOT captured" branch in
 `cmd_send`.
 
+**The address gets tests, always.** It is the only field that decides whether a
+letter arrives, and the sender cannot check it once the envelope is sealed. A
+comma-joined address shipped in the first version and wrapped mid-address in the
+envelope window on a real PO Box letter, which was only found after it had gone.
+`--line` is repeatable and joined with newlines; `test_address.py` holds that
+down, including that it is never joined with a comma again.
+
 **Standard library only.** Python 3.9 floor. No dependencies, no virtualenv, no
 build step. This is a hard constraint, not a preference - a skill that needs
 `pip install` before it can post a letter will not be used.
