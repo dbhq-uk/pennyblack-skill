@@ -1,0 +1,28 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Local agent tooling state
+.serena/
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# pennyblack needs no virtualenv (stdlib only), but do not commit one if a
+# contributor makes one anyway.
+.venv/
+
+# Never commit credentials or a local send log. These live in
+# ~/.dbhq/pennyblack/ and should never be inside a repo, but belt and braces.
+config.json
+sent.jsonl
+*.pem
+.env

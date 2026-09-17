@@ -1,0 +1,24 @@
+{
+  "name": "pennyblack",
+  "description": "Send a physical letter in the UK from Claude Code or Codex - markdown or a PDF in, printed and posted via Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, returns the Royal Mail tracking number, and prices every letter before you commit to it. No dependencies, no minimum order.",
+  "version": "0.1.0",
+  "author": {
+    "name": "DBHQ",
+    "email": "dan@dbhq.uk"
+  },
+  "homepage": "https://dbhq.uk",
+  "repository": "https://github.com/dbhq-uk/pennyblack-skill",
+  "license": "MIT",
+  "keywords": [
+    "post",
+    "letter",
+    "royal-mail",
+    "hybrid-mail",
+    "direct-mail",
+    "signed-for",
+    "recorded-delivery",
+    "special-delivery",
+    "uk",
+    "intelliprint"
+  ]
+}
