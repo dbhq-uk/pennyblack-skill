@@ -74,9 +74,9 @@ def _describe_draft(draft, as_json=False):
     if draft.testmode:
         print("  This is a test draft. Re-run with --live to create a real one.")
     else:
-        print(f"  Nothing has been printed or charged yet. To post it:")
+        print("  Nothing has been printed or charged yet. To post it:")
         print(f"    pennyblack send {draft.id}")
-        print(f"  To throw it away:")
+        print("  To throw it away:")
         print(f"    pennyblack cancel {draft.id}")
     print()
     return draft

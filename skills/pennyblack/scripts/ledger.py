@@ -22,7 +22,6 @@ avoiding entirely. `pennyblack log` renders it instead.
 """
 
 import json
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path

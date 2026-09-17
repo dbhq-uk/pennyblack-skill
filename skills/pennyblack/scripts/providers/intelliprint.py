@@ -27,7 +27,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .base import Address, Cost, Draft, Mailing, Provider
+from .base import Cost, Draft, Mailing, Provider
 
 API_BASE = "https://api.intelliprint.net/v1"
 
