@@ -44,7 +44,7 @@ pennyblack draft notice.pdf --name "Acme Ltd" \
 pennyblack send print_YheDXex1cHsyD9xosrgZu
 ```
 
-## Why it is built this way
+## What makes it different
 
 **Drafting and sending are separate commands, and there is no one-shot option.**
 Physical post cannot be recalled and costs money every time. So the flow is:
@@ -97,6 +97,15 @@ same install two ways: Claude Code substitutes `${CLAUDE_SKILL_DIR}`, so the
 whole skill directory is symlinked untouched, while Codex does not, so its
 `SKILL.md` is rewritten at install time. Re-run the Codex one after editing
 `SKILL.md`.
+
+## Requirements
+
+**Python 3.9 or newer**, standard library only. No virtualenv and no
+third-party packages - the floor is what CI proves, on 3.9.
+
+An Intelliprint API key, kept in `~/.dbhq/pennyblack/config.json` at mode
+600. **This skill spends money when it runs**, which is why `draft` and
+`send` are separate commands and drafts are test mode until `--live`.
 
 ## What it costs
 
