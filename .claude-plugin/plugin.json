@@ -1,7 +1,7 @@
 {
   "name": "pennyblack",
   "description": "Put a PDF in the post. Printed in the UK and delivered by Royal Mail, with Signed For, Tracked 24/48 and Special Delivery, the real tracking number returned, and every letter priced and previewed before you commit to it. Posts your PDF exactly as it is - no conversion. No dependencies, no minimum order.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": {
     "name": "DBHQ",
     "email": "dan@dbhq.uk"
