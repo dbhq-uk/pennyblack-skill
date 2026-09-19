@@ -189,7 +189,9 @@ OpenAPI spec, a per-letter rate card and a test mode.
 
 It was chosen over Stannp, Docmail, PostGrid, Lob and Docsaway because it is the
 only one that publishes both a Signed For price *and* a signed-for field in a
-public API spec, and returns the Royal Mail tracking number. Most UK hybrid-mail
+public API spec, and returns the Royal Mail tracking number.
+
+Most UK hybrid-mail
 providers cannot offer Signed For at all: an automated enclosing line cannot
 apply the per-item barcoded label Royal Mail scans at acceptance.
 
