@@ -152,8 +152,9 @@ outside a test, something has leaked.
 ## Adding a provider
 
 See CONTRIBUTING.md. The short version: a new file in `providers/`, a
-`service_map` that omits anything the vendor genuinely cannot do, the four
-methods, and a line in the registry. Nothing else changes.
+`service_map` that omits anything the vendor genuinely cannot do, the five
+methods (`draft`, `retrieve_draft`, `confirm`, `cancel`, `status`), the optional
+`fetch_document`, and a line in the registry. Nothing else changes.
 
 ## Postage advice is a factual matter
 

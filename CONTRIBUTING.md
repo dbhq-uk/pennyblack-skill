@@ -34,8 +34,13 @@ To add one:
 2. Fill in `service_map`, mapping pennyblack's service names to the vendor's.
    **Leave out anything the vendor cannot do** - pennyblack will then say so
    plainly rather than silently downgrading a letter to a cheaper service.
-3. Implement `draft`, `confirm`, `cancel` and `status`. `cancel` returns a
-   `Cancellation` saying what happened to each letter.
+3. Implement the five methods the commands call: `draft`, `retrieve_draft`,
+   `confirm`, `cancel` and `status`. `send` calls `retrieve_draft` before it
+   confirms, to check the job and its cost, so a provider without it fails on
+   `send`. `cancel` returns a `Cancellation` saying what happened to each
+   letter. `fetch_document` is optional: it returns the letter as a PDF, which
+   `draft` saves as the preview and `send` keeps in the record. Without it,
+   `send` records the letter with no copy of it, and says so.
 4. Register it in `providers/__init__.py`.
 5. Add tests that stub the transport, following `test_intelliprint.py`.
 
