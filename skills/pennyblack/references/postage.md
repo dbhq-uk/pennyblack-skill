@@ -142,6 +142,9 @@ For a single sheet in a C5 envelope, `signed` gets you a signature *and* a
 tracking number for less than tracked-as-a-large-letter usually costs. Prefer
 Signed For unless the recipient specifically needs the in-transit scans.
 
+Tracked 24 and Tracked 48 also cannot go in a C5 envelope. `draft` uses C4 for
+them unless you choose another envelope, and refuses `--envelope c5`.
+
 ## Compensation is £20, not £50
 
 Signed For compensation is capped at **£20** or the value of the item, whichever

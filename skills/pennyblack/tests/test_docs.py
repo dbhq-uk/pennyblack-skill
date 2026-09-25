@@ -197,5 +197,22 @@ class TestPreviewIsTheCheck(unittest.TestCase):
                 self.assertIn("what you see in the preview is what comes out", text)
 
 
+class TestNoDefaultService(unittest.TestCase):
+    """The agent must ask which service. The docs used to name a default."""
+
+    def test_skill_md_names_no_default_service(self):
+        import sys
+        sys.path.insert(0, str(SKILL / "scripts"))
+        from providers.base import SERVICES
+        text = " ".join(SKILL_MD.read_text(encoding="utf-8").split()).lower()
+        for name in SERVICES:
+            with self.subTest(service=name):
+                self.assertNotRegex(text, rf"default:? `?{re.escape(name)}`?[ .,)]")
+
+    def test_skill_md_says_service_is_required(self):
+        text = " ".join(SKILL_MD.read_text(encoding="utf-8").split()).lower()
+        self.assertIn("`--service` - required", text)
+
+
 if __name__ == "__main__":
     unittest.main()

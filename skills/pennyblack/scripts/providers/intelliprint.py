@@ -131,6 +131,8 @@ class Intelliprint(Provider):
     #: https://www.intelliprint.net/docs/envelope-and-postcard-sizes. A letter
     #: that needs more is moved to a bigger envelope, and charged for it.
     envelope_capacity = {"c5": 15, "c4": 50, "c4_plus": 250, "a4_box": 1800}
+    #: Tracked 24 and 48 cannot use C5, per the same page.
+    envelope_excludes = {"tracked-24": {"c5"}, "tracked-48": {"c5"}}
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -280,7 +282,7 @@ class Intelliprint(Provider):
             "confirmed": False,
             "postage": {
                 "service": self.service_map[service],
-                "ideal_envelope": options.get("envelope", "c5"),
+                "ideal_envelope": self.envelope_for(service, options.get("envelope")),
             },
             "printing": {
                 "double_sided": "yes" if options.get("double_sided", True) else "no",

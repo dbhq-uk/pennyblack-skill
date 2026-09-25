@@ -193,6 +193,24 @@ class TestDraft(unittest.TestCase):
             source="x", recipients=self.addr, service="signed")
         self.assertEqual(draft.sheets_per_letter, 16)
 
+    def test_a_tracked_service_is_never_asked_for_c5(self):
+        """Tracked 24 and 48 cannot use C5, per the envelope sizes page."""
+        for service in ("tracked-24", "tracked-48"):
+            with self.subTest(service=service):
+                prov = StubbedIntelliprint({"api_key": "k"}, _payload())
+                prov.draft(source="x", recipients=self.addr, service=service)
+                self.assertEqual(prov.calls[0]["fields"]["postage"]["ideal_envelope"], "c4")
+
+    def test_a_tracked_service_in_c5_is_refused_before_the_api_call(self):
+        prov = StubbedIntelliprint({"api_key": "k"}, _payload())
+        with self.assertRaises(ValueError):
+            prov.draft(source="x", recipients=self.addr, service="tracked-24", envelope="c5")
+        self.assertEqual(prov.calls, [])
+
+    def test_other_services_default_to_c5(self):
+        self.prov.draft(source="x", recipients=self.addr, service="first")
+        self.assertEqual(self.prov.calls[0]["fields"]["postage"]["ideal_envelope"], "c5")
+
     def test_c5_holds_fifteen_sheets(self):
         """From the provider's envelope sizes page."""
         self.assertEqual(Intelliprint.envelope_capacity["c5"], 15)
