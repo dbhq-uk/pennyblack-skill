@@ -237,10 +237,14 @@ rest of their correspondence rather than at the repo root.
 
 Only credentials live in `~/.dbhq/pennyblack/`.
 
-**Tell the user if the repository is public.** The record holds names and postal
-addresses, which is fine in a private repo and a personal-data disclosure in a
-public one. The README written into the folder says so and gives the
-`.gitignore` line.
+**`send` refuses to write the record into a public repository.** The record
+holds names and postal addresses, which is fine in a private repo and a
+personal-data disclosure in a public one. Before it confirms anything, `send`
+asks GitHub through `gh`. If the repository is public it posts nothing and says
+so. Ask the user where to keep the record privately, then send again with
+`--log-dir`. If `gh` is missing or the repository is not on GitHub, `send`
+warns that it could not check and goes ahead. Pass that warning on, and if the
+user says the repository is public, stop and use `--log-dir`.
 
 ## Useful flags
 

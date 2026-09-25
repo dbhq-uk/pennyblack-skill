@@ -24,5 +24,11 @@ __pycache__/
 # ~/.dbhq/pennyblack/ and should never be inside a repo, but belt and braces.
 config.json
 sent.jsonl
+
+# The record of posted letters: names, postal addresses and a copy of each
+# letter. This repository is public, so a letter posted from a checkout of it
+# must never be committed. The whole folder, not only sent.jsonl, because the
+# PDFs sit beside it.
+.pennyblack/
 *.pem
 .env

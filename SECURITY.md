@@ -26,9 +26,15 @@ posted**. That is deliberate - it is the evidence that a letter was sent and of
 what it said - but it means the folder is personal data under UK GDPR, and in a
 public repository it is a disclosure.
 
-pennyblack writes a README into the folder saying so, with the `.gitignore` line
-to suppress it, and `--log-dir` moves the whole record somewhere private. It
-cannot tell whether your repository is public, so that judgement is yours.
+So before `send` confirms anything, it asks GitHub whether the repository is
+public (`gh repo view --json visibility`, run in the repository). If it is,
+`send` refuses and posts nothing, unless `--log-dir` says where to keep the
+record instead. Without `gh`, or for a repository that is not on GitHub, it
+cannot tell: it says so and goes ahead, and that judgement is yours.
+
+pennyblack also writes a README into the folder saying what it holds, with the
+`.gitignore` line to keep it out of commits, and `--log-dir` moves the whole
+record somewhere private.
 
 **Nothing is posted without an explicit `send`.** `draft` never prints or
 charges. This is the main safety property of the tool, and it is covered by

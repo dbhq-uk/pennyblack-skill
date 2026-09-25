@@ -459,10 +459,39 @@ def _pence(amount):
     return int(pence)
 
 
+def _check_not_public(args, log_dir):
+    """Refuse to write the record into a public repository.
+
+    The record holds names, postal addresses and a copy of every letter. This
+    runs before anything is confirmed, so a refusal never leaves a posted
+    letter out of the record. --log-dir is an explicit choice of where the
+    record goes, so it is not second-guessed. When GitHub cannot be asked, the
+    send goes ahead as before, with a warning.
+    """
+    if args.log_dir:
+        return
+    root = ledger.find_repo_root()
+    if root is None or log_dir != root / ledger.LEDGER_DIRNAME:
+        return
+    visibility, reason = ledger.visibility(root)
+    if visibility == "PUBLIC":
+        fail(f"{root} is a public repository. The record would go in {log_dir}, and "
+             "it holds names,\n  postal addresses and a copy of each letter. "
+             "Nothing was posted.\n"
+             "  Ask the user where to keep the record privately, then send with it:\n"
+             f"    pennyblack send {args.id} --log-dir <a private folder>")
+    if visibility is None:
+        print(f"warning: could not check whether {root} is public ({reason}).\n"
+              f"  The record goes in {log_dir}, and it holds names, postal addresses "
+              "and a copy\n  of each letter. If the repository is public, stop and "
+              "send with --log-dir instead.", file=sys.stderr)
+
+
 def cmd_send(args):
     conf = cfg.load()
     prov = providers.get(conf)
     log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+    _check_not_public(args, log_dir)
 
     before = prov.retrieve_draft(args.id)
     record_file = log_dir / ledger.filename(before.testmode)
@@ -849,7 +878,8 @@ def build_parser():
                    help="the cost inc VAT the user approved, like 5.21. send refuses, "
                         "and posts nothing, if the job's cost is different")
     s.add_argument("--log-dir", help="where to keep the record "
-                   "(default: <git root>/.pennyblack)")
+                   "(default: <git root>/.pennyblack, refused if GitHub says "
+                   "the repository is public)")
     s.set_defaults(func=cmd_send)
 
     s = sub.add_parser("status", parents=[common],
