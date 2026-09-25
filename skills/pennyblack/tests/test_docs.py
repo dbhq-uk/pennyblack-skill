@@ -233,5 +233,33 @@ class TestApprovedCost(unittest.TestCase):
         self.assertIn("--expect-cost", text[text.index("4. send it"):])
 
 
+class TestOnePriceTable(unittest.TestCase):
+    """Royal Mail prices change. A copy of the table in SKILL.md or the README
+    drifts from references/postage.md, so there is only the one."""
+
+    def test_no_price_table_outside_postage_md(self):
+        for path in (SKILL_MD, README, AGENTS):
+            with self.subTest(path=path.name):
+                rows = [ln for ln in path.read_text(encoding="utf-8").splitlines()
+                        if ln.lstrip().startswith("|") and re.search(r"£\d", ln)]
+                self.assertEqual(rows, [], f"{path.name} has a price table")
+
+    def test_postage_md_has_the_table(self):
+        rows = [ln for ln in POSTAGE.read_text(encoding="utf-8").splitlines()
+                if ln.startswith("|") and re.search(r"£\d", ln)]
+        self.assertGreater(len(rows), 3)
+
+
+class TestEntryScripts(unittest.TestCase):
+    """install.sh and install-codex.sh run chmod +x on scripts/*.py. A script
+    committed without the bit leaves a mode change in git status after every
+    install from a clone."""
+
+    def test_every_script_is_executable(self):
+        for path in sorted((SKILL / "scripts").glob("*.py")):
+            with self.subTest(script=path.name):
+                self.assertTrue(path.stat().st_mode & 0o111, f"{path.name} is not executable")
+
+
 if __name__ == "__main__":
     unittest.main()

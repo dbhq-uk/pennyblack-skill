@@ -173,9 +173,11 @@ widen the CPR point beyond court documents again: an agent following it could
 talk a user out of the method their lease requires and cost them a valid
 notice. `tests/test_docs.py` holds the limit.
 
-If you update prices or services, update that file and the README table in the
-same change, and keep the rate card's effective date accurate. Do not let the
-two drift.
+Prices live in one table, in `references/postage.md`. SKILL.md and the README
+point at it and copy no figures, because Royal Mail prices change and a copy
+drifts. `tests/test_docs.py` fails if a price table appears anywhere else. If
+you update prices or services, update that table and keep the rate card's
+effective date accurate.
 
 ## Tests
 

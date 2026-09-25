@@ -1124,6 +1124,67 @@ class TestPublicRepository(unittest.TestCase):
         self.assertIn("known GitHub host", err)
 
 
+class TestSetup(unittest.TestCase):
+    """setup used to need a terminal, and the only other way in was
+    --api-key, which puts the key in the shell history and in an agent's
+    transcript. The key must never be echoed back either."""
+
+    KEY = "ip_live_not_a_real_key_42"
+
+    def setup_with(self, *argv, stdin="", tty=False, env=None, typed=None):
+        fake_stdin = io.StringIO(stdin)
+        fake_stdin.isatty = lambda: tty
+        environ = {k: v for k, v in os.environ.items() if k != pennyblack.cfg.KEY_ENV}
+        environ.update(env or {})
+        with mock.patch.dict(os.environ, environ, clear=True), \
+                mock.patch.object(pennyblack.sys, "stdin", fake_stdin), \
+                mock.patch.object(pennyblack.getpass, "getpass",
+                                  return_value=typed or "") as asked, \
+                mock.patch.object(pennyblack.cfg, "save",
+                                  return_value=Path("/nowhere/config.json")) as save:
+            code, out, err = run(["setup", *argv])
+        return code, out, err, save, asked
+
+    def assertSaved(self, result):
+        code, out, err, save, _ = result
+        self.assertEqual(code, 0, err)
+        save.assert_called_once()
+        self.assertEqual(save.call_args[0][0], self.KEY)
+        self.assertNotIn(self.KEY, out + err, "the key was printed")
+
+    def test_the_key_can_be_piped_in(self):
+        self.assertSaved(self.setup_with("--api-key-stdin", stdin=self.KEY + "\n"))
+
+    def test_the_key_can_come_from_the_environment(self):
+        self.assertSaved(self.setup_with(env={"PENNYBLACK_API_KEY": self.KEY}))
+
+    def test_at_a_terminal_the_key_is_asked_for_without_echo(self):
+        result = self.setup_with(tty=True, typed=self.KEY)
+        self.assertSaved(result)
+        result[4].assert_called_once()
+
+    def test_with_no_terminal_and_no_key_it_says_how(self):
+        code, _, err, save, asked = self.setup_with()
+        self.assertNotEqual(code, 0)
+        save.assert_not_called()
+        asked.assert_not_called()
+        self.assertIn("--api-key-stdin", err)
+        self.assertIn("PENNYBLACK_API_KEY", err)
+
+    def test_an_empty_pipe_is_refused(self):
+        code, _, err, save, _ = self.setup_with("--api-key-stdin", stdin="\n")
+        self.assertNotEqual(code, 0)
+        save.assert_not_called()
+
+    def test_api_key_still_works(self):
+        self.assertSaved(self.setup_with("--api-key", self.KEY))
+
+    def test_api_key_and_stdin_together_are_refused(self):
+        code, _, _, save, _ = self.setup_with("--api-key", self.KEY, "--api-key-stdin")
+        self.assertNotEqual(code, 0)
+        save.assert_not_called()
+
+
 class TestTestSends(unittest.TestCase):
     """A test draft can be sent. Nothing is printed or posted, so nothing in
     the output, the JSON or the record may read as if it were."""

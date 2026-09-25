@@ -16,6 +16,9 @@ from pathlib import Path
 HOME = Path(os.environ.get("PENNYBLACK_HOME", Path.home() / ".dbhq" / "pennyblack"))
 CONFIG_PATH = HOME / "config.json"
 DEFAULT_PROVIDER = "intelliprint"
+#: `setup` reads the API key from here when it is not given another way, so a
+#: script can store it without a terminal and without a command-line argument.
+KEY_ENV = "PENNYBLACK_API_KEY"
 
 
 
