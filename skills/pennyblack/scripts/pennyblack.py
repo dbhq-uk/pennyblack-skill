@@ -235,68 +235,103 @@ def cmd_draft(args):
     return _describe_draft(draft, args.json)
 
 
-def cmd_send(args):
-    conf = cfg.load()
-    prov = providers.get(conf)
-
-    before = prov.retrieve_draft(args.id)
-    if before.confirmed:
-        fail(f"{args.id} was already confirmed - it is posted or on its way. "
-             f"Check it with: pennyblack status {args.id}")
-
-    if not args.yes and sys.stdin.isatty():
-        where = ", ".join(before.recipients) or "the address on the draft"
-        print(f"\n  About to post {args.id} to {where}")
-        print(f"  for {before.cost} by "
-              f"{SERVICES.get(before.service, {}).get('label', before.service)}.")
-        if not before.testmode:
-            print("  Physical post cannot be recalled.")
-        print()
-        try:
-            answer = input("  Type 'send' to confirm: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            fail("cancelled")
-        if answer != "send":
-            fail("cancelled - nothing was posted")
-
-    draft = prov.confirm(args.id)
-
+def _send_entry(draft):
+    """The record line for a confirmed job."""
+    letters = draft.raw.get("letters") or []
     entry = {
         "id": draft.id,
         "provider": draft.provider,
         "service": draft.service,
         "service_label": SERVICES.get(draft.service, {}).get("label", draft.service),
         "recipients": draft.recipients,
-        "addresses": [
-            l.get("address") for l in (draft.raw.get("letters") or [])
-            if l.get("address")
-        ],
+        "addresses": [l.get("address") for l in letters if l.get("address")],
         "cost_pence": draft.cost.total_pence,
         "pages": draft.pages,
         "testmode": draft.testmode,
         "confirmed_at": draft.raw.get("confirmed_at"),
         "reference": draft.raw.get("reference"),
     }
-    tracking = [
-        l.get("tracking_number") for l in (draft.raw.get("letters") or [])
-        if l.get("tracking_number")
-    ]
+    tracking = [l.get("tracking_number") for l in letters if l.get("tracking_number")]
     if tracking:
         entry["tracking_numbers"] = tracking
+    return entry
+
+
+def cmd_send(args):
+    conf = cfg.load()
+    prov = providers.get(conf)
+    log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+
+    before = prov.retrieve_draft(args.id)
+    recovered = False
+    if before.confirmed:
+        if ledger.contains(log_dir, args.id):
+            fail(f"{args.id} was already confirmed, and it is already in the record "
+                 f"at {log_dir / ledger.SENT_FILENAME}. Nothing was posted this time.\n"
+                 f"  Check it with: pennyblack status {args.id}")
+        # Confirmed, but never recorded. This is what a confirm that timed out
+        # after the provider processed it leaves behind. Record it now, so that
+        # retrying send is always safe. Never confirm it a second time.
+        recovered = True
+        draft = before
+    else:
+        if not args.yes and sys.stdin.isatty():
+            where = ", ".join(before.recipients) or "the address on the draft"
+            print(f"\n  About to post {args.id} to {where}")
+            print(f"  for {before.cost} by "
+                  f"{SERVICES.get(before.service, {}).get('label', before.service)}.")
+            if not before.testmode:
+                print("  Physical post cannot be recalled.")
+            print()
+            try:
+                answer = input("  Type 'send' to confirm: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                fail("cancelled")
+            if answer != "send":
+                fail("cancelled - nothing was posted")
+
+        draft = prov.confirm(args.id)
+
+    entry = _send_entry(draft)
+    tracking = entry.get("tracking_numbers", [])
 
     # Capture the document now or never - the preview link is signed and
     # expires within the hour. A tracking number says something arrived; only
     # this says what.
     document = prov.fetch_document(draft)
 
-    log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
-    written = ledger.record(entry, log_dir=log_dir, document=document)
+    # From here on the letter is posted and paid for. A record that cannot be
+    # written must not end in a traceback: print the entry so it can be added
+    # by hand, and say plainly what happened.
+    try:
+        written = ledger.record(entry, log_dir=log_dir, document=document)
+    except OSError as exc:
+        print(json.dumps(entry, sort_keys=True, ensure_ascii=False), file=sys.stderr)
+        fail(f"POSTED, BUT NOT RECORDED. {draft.id} was confirmed, but the record "
+             f"could not be written to {log_dir}: {exc}\n"
+             f"  Fix that, then run: pennyblack send {draft.id}\n"
+             "  It will find the letter already posted, record it, and not post it again.\n"
+             f"  Or add the line above to {log_dir / ledger.SENT_FILENAME} by hand.\n"
+             "  The copy of the document may not have been saved. Its preview link\n"
+             "  expires within the hour:\n"
+             f"  {draft.preview_url or '(none)'}")
 
     if args.json:
-        return _out(entry, True)
+        return _out(dict(
+            entry,
+            document=written["document"].name if written["document"] else None,
+            ledger=str(written["sent"]),
+            captured=bool(written["document"]),
+            recovered=recovered,
+        ), True)
 
     print()
-    print(f"  posted     {draft.id}")
+    if recovered:
+        print(f"  posted     {draft.id}, by an earlier send")
+        print("  note       It was missing from the record, so it has been recorded")
+        print("             now. It was not posted again.")
+    else:
+        print(f"  posted     {draft.id}")
     print(f"  to         {', '.join(draft.recipients)}")
     print(f"  service    {SERVICES.get(draft.service, {}).get('label', draft.service)}")
     print(f"  cost       {draft.cost}")

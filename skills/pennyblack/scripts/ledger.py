@@ -131,6 +131,15 @@ def record(entry: dict, *, log_dir: Path, document: bytes = None) -> dict:
     return written
 
 
+def contains(log_dir: Path, print_id: str) -> bool:
+    """True if the record already holds a line for this print job.
+
+    `send` checks this before recording a job it finds already confirmed, so
+    that a retry writes the missing line once and never a second copy.
+    """
+    return any(e.get("id") == print_id for e in read(log_dir))
+
+
 def read(log_dir: Path) -> list:
     sent = Path(log_dir) / SENT_FILENAME
     if not sent.exists():

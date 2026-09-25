@@ -63,6 +63,14 @@ degrades to a tracking number, which proves something arrived but not what.
 A failed capture is reported, not swallowed - see the "NOT captured" branch in
 `cmd_send`.
 
+**`send` is safe to retry, and a posted letter always reaches the record.**
+If `send` finds the job already confirmed, it never confirms it again. It
+records it if the record has no line for it, and changes nothing if it does.
+That covers a confirm that timed out after the provider processed it. If the
+record cannot be written after confirm, `send` prints the entry on stderr and
+exits non-zero with a plain message, never a traceback. `TestSend` in
+`tests/test_cli.py` holds all of this.
+
 **The address gets tests, always.** It is the only field that decides whether a
 letter arrives, and the sender cannot check it once the envelope is sealed. A
 comma-joined address shipped in the first version and wrapped mid-address in the
