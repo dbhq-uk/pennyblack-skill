@@ -170,6 +170,56 @@ class TestDraft(unittest.TestCase):
             self.prov.draft(source=Path("/nonexistent/letter.pdf"),
                             recipients=self.addr, service="second")
 
+    def test_the_address_is_read_back_in_full(self):
+        payload = _payload()
+        payload["letters"][0]["address"] = {"name": "Acme Ltd", "line": "1 High St\nLeeds",
+                                            "postcode": "LS1 1AA", "country": "GB"}
+        draft = StubbedIntelliprint({"api_key": "k"}, payload).draft(
+            source="x", recipients=self.addr, service="signed")
+        self.assertEqual(len(draft.addresses), 1)
+        self.assertEqual(draft.addresses[0].line, "1 High St\nLeeds")
+        self.assertEqual(draft.addresses[0].postcode, "LS1 1AA")
+
+    def test_sheets_per_letter_is_the_largest_letter(self):
+        payload = _payload(sheets=20)
+        payload["letters"] = [dict(payload["letters"][0], sheets=4),
+                              dict(payload["letters"][0], sheets=16)]
+        draft = StubbedIntelliprint({"api_key": "k"}, payload).draft(
+            source="x", recipients=self.addr, service="signed")
+        self.assertEqual(draft.sheets_per_letter, 16)
+
+    def test_sheets_per_letter_falls_back_to_the_job_total(self):
+        draft = StubbedIntelliprint({"api_key": "k"}, _payload(sheets=16)).draft(
+            source="x", recipients=self.addr, service="signed")
+        self.assertEqual(draft.sheets_per_letter, 16)
+
+    def test_c5_holds_fifteen_sheets(self):
+        """From the provider's envelope sizes page."""
+        self.assertEqual(Intelliprint.envelope_capacity["c5"], 15)
+        self.assertEqual(Intelliprint.envelope_capacity["c4"], 50)
+
+
+class TestAddressFromPdf(unittest.TestCase):
+    """With no recipients, Intelliprint reads the address from page 1."""
+
+    def setUp(self):
+        self.prov = StubbedIntelliprint({"api_key": "k"}, _payload())
+
+    def test_sends_no_recipients(self):
+        self.prov.draft(source="x", recipients=[], service="signed", address_from_pdf=True)
+        self.assertNotIn("recipients", self.prov.calls[0]["fields"])
+
+    def test_no_recipients_without_the_option_is_still_refused(self):
+        with self.assertRaises(IntelliprintError):
+            self.prov.draft(source="x", recipients=[], service="signed")
+        self.assertEqual(self.prov.calls, [])
+
+    def test_recipients_and_the_option_together_are_refused(self):
+        with self.assertRaises(IntelliprintError):
+            self.prov.draft(source="x", service="signed", address_from_pdf=True,
+                            recipients=[Address(name="A", line="B", postcode="C")])
+        self.assertEqual(self.prov.calls, [])
+
 
 class TestConfirm(unittest.TestCase):
     def test_confirm_sets_confirmed_true(self):

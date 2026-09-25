@@ -164,5 +164,38 @@ class TestRecall(unittest.TestCase):
                     self.assertIn("once", text[max(0, m.start() - 30):m.end() + 30])
 
 
+class TestPreviewIsTheCheck(unittest.TestCase):
+    """The provider prints the address and a code string onto page 1, so the
+    PDF is not quite what gets posted. The docs used to say it was posted
+    unchanged, and the only check was passing on a link."""
+
+    # Built in two halves so this file does not trip its own test.
+    CLAIM = "exactly " + "as it is"
+
+    def test_no_file_claims_the_pdf_is_posted_unchanged(self):
+        for path in sorted(REPO.rglob("*")):
+            if ".git" in path.parts or path.suffix not in (".md", ".py", ".json", ".sh"):
+                continue
+            text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+            with self.subTest(file=str(path.relative_to(REPO))):
+                self.assertNotIn(self.CLAIM, text)
+
+    def test_skill_md_requires_the_address_window_check(self):
+        section = _section(SKILL_MD, "posting a letter")
+        self.assertIsNotNone(section)
+        text = " ".join(section.split()).lower()
+        self.assertIn("open page 1 of the saved preview", text)
+        self.assertIn("address window", text)
+        self.assertIn('do not ask for "send it"', text)
+        # The check comes before the user is asked, not after.
+        self.assertLess(text.index("open page 1"), text.index("only once they have said so"))
+
+    def test_skill_md_and_readme_say_the_preview_is_what_comes_out(self):
+        for path in (SKILL_MD, README):
+            with self.subTest(file=path.name):
+                text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+                self.assertIn("what you see in the preview is what comes out", text)
+
+
 if __name__ == "__main__":
     unittest.main()

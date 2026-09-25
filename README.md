@@ -21,8 +21,10 @@ pennyblack is a Claude Code and Codex skill for posting physical letters in the
 UK - including **Signed For**, **Tracked 24/48** and **Special Delivery** - and
 it records the real Royal Mail tracking number when Royal Mail issues it.
 
-It posts your PDF **exactly as it is**. No conversion, no typesetting, no
-reflowing. What you see in the PDF is what comes out of the envelope.
+It never converts, typesets or reflows your PDF. The provider adds the address
+to page 1, where the envelope window falls, and a small code string down the
+left margin, so `draft` saves a preview of the letter as it will be printed.
+**What you see in the preview is what comes out of the envelope.**
 
 Named after the Penny Black, the 1840 stamp that made it possible to pay once
 and have a letter carried anywhere.
@@ -35,12 +37,17 @@ pennyblack draft notice.pdf --name "Acme Ltd" \
 
 #   draft      print_YheDXex1cHsyD9xosrgZu
 #   to         Acme Ltd
+#              1 High Street
+#              Leeds
+#              LS1 1AA
 #   service    Royal Mail Signed For 1st Class
 #   pages      1 on 1 sheet(s)
 #   cost       £5.21 inc VAT (£4.34 + VAT)
-#   preview    https://... (signed link, expires in about an hour)
+#   preview    /tmp/pennyblack-preview-.../print_YheDXex1cHsyD9xosrgZu.pdf
+#              https://... (signed link, expires in about an hour)
 
-# 2. Look at the preview. Then, and only then:
+# 2. Open page 1 of the preview and check the address window.
+# 3. Then, and only then:
 pennyblack send print_YheDXex1cHsyD9xosrgZu
 ```
 
@@ -50,6 +57,12 @@ pennyblack send print_YheDXex1cHsyD9xosrgZu
 Physical post cannot be recalled once it is printed, and it costs money every
 time. So the flow is: create the letter, get the real price and a PDF preview of
 the actual thing, show a human, wait. Only `send` spends anything.
+
+**It checks the letter before it uploads it.** `draft` refuses a file that is
+not really a PDF or is encrypted, an address given as one line with commas in
+it, and a UK postcode in the wrong format. It warns when a page is not A4 or a
+letter will not fit its envelope. None of that replaces looking at the preview,
+which is why it saves one.
 
 **A mistake spotted just after `send` can often still be stopped.** Until
 printing starts, `cancel` recalls each letter still waiting to print, and the
@@ -143,7 +156,7 @@ what you send.
 |---|---|
 | `setup` | store your API key |
 | `services` | list postage options and what each one actually proves |
-| `draft <file.pdf>` | upload and price a letter. Free. Nothing is printed |
+| `draft <file.pdf>` | check, upload and price a letter, and save a preview. Free. Nothing is printed |
 | `send <id>` | commit a draft. **This posts it and charges you** |
 | `cancel <id>` | throw away a draft, or recall a sent letter that has not been printed yet |
 | `status <id>` | status, posting date and Royal Mail tracking number, written to the record |
@@ -189,6 +202,11 @@ correspondence instead.
 **PDF, and only PDF.** Export or print your document to PDF first, then send
 that. pennyblack does not convert anything, because a tool that silently reflows
 a letter is a tool that can change what the letter says on the page.
+
+If the PDF already has the address on page 1, where the envelope window falls,
+draft it with `--address-from-pdf` instead of `--name`, `--line` and
+`--postcode`. The provider reads the address from the file, and `draft` shows
+what it read.
 
 Letterheads, if your account has one uploaded, are applied by the provider at
 print time behind your PDF via `--background-first` and `--background-other`.

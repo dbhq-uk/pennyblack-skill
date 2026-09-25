@@ -16,12 +16,16 @@ that is not an oversight. Physical post cannot be recalled once it is printed.
 
 import argparse
 import json
+import os
 import sys
+import tempfile
+import textwrap
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import checks  # noqa: E402
 import config as cfg  # noqa: E402
 import ledger  # noqa: E402
 import providers  # noqa: E402
@@ -100,7 +104,34 @@ def _is_open(entry, entries, now):
     return False
 
 
-def _describe_draft(draft, as_json=False):
+def _address_lines(address):
+    """An address as it will read in the envelope window, one line each."""
+    lines = [address.name] + (address.line or "").splitlines() + [address.postcode]
+    return [ln.strip() for ln in lines if ln and ln.strip()]
+
+
+def _save_preview(prov, draft):
+    """Download the preview to a local file, and return its path or None.
+
+    The link is signed and expires within the hour, and the agent has to be
+    able to open page 1 and look at the address window. A private temporary
+    directory, because the letter carries a name and an address.
+    """
+    data = prov.fetch_document(draft)
+    if not data:
+        return None
+    try:
+        folder = Path(tempfile.mkdtemp(prefix="pennyblack-preview-"))
+        target = folder / f"{draft.id or 'draft'}.pdf"
+        target.write_bytes(data)
+        os.chmod(target, 0o600)
+    except OSError:
+        return None
+    return target
+
+
+def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
+                    address_from_pdf=False):
     if as_json:
         return _out({
             "id": draft.id,
@@ -111,23 +142,46 @@ def _describe_draft(draft, as_json=False):
             "pages": draft.pages,
             "sheets": draft.sheets,
             "recipients": draft.recipients,
+            "addresses": [_address_lines(a) for a in draft.addresses],
+            "address_from_pdf": address_from_pdf,
             "cost_pence": draft.cost.total_pence,
             "cost": str(draft.cost),
             "preview_url": draft.preview_url,
+            "preview_file": str(preview_file) if preview_file else None,
+            "warnings": list(warnings),
         }, True)
 
     meta = SERVICES.get(draft.service, {})
     print()
     print(f"  draft      {draft.id}")
-    print(f"  to         {', '.join(draft.recipients) or '(none)'}")
+    if draft.addresses:
+        first = "read from" if address_from_pdf else "to"
+        for n, address in enumerate(draft.addresses):
+            for i, line in enumerate(_address_lines(address)):
+                label = (first if n == 0 else "and") if i == 0 else ""
+                print(f"  {label:<10} {line}")
+        if address_from_pdf:
+            print("             (the address the provider read from page 1 of the PDF)")
+    else:
+        print(f"  to         {', '.join(draft.recipients) or '(none)'}")
     print(f"  service    {meta.get('label', draft.service)}")
     print(f"  pages      {draft.pages} on {draft.sheets} sheet(s)")
     print(f"  cost       {draft.cost}")
     if draft.testmode:
         print("  mode       TEST - nothing will be printed or charged")
+    if preview_file:
+        print(f"  preview    {preview_file}")
+    elif draft.preview_url:
+        print("  preview    NOT saved - open the link instead")
     if draft.preview_url:
-        print(f"  preview    {draft.preview_url}")
+        print(f"             {draft.preview_url}")
         print("             (signed link, expires in about an hour)")
+    for warning in warnings:
+        print(textwrap.fill(warning, width=78, initial_indent="  WARNING    ",
+                            subsequent_indent=" " * 13))
+    print()
+    print("  Open page 1 of the preview and check the address in the envelope")
+    print("  window before anyone says \"send it\".")
     print()
     if draft.testmode:
         print("  This is a test draft. Re-run with --live to create a real one.")
@@ -194,11 +248,13 @@ def cmd_services(args):
 
 
 def _read_source(args):
-    """Return the Path to the PDF that will be posted.
+    """Return the Path to the PDF that will be posted, and its bytes.
 
-    pennyblack posts a document you already have, exactly as it is. It does not
-    typeset anything, because a tool that silently reflows a letter is a tool
-    that can change what a letter says on the page.
+    pennyblack posts a document you already have. It does not typeset or
+    convert anything, because a tool that silently reflows a letter is a tool
+    that can change what a letter says on the page. The provider does add to
+    page 1 - the address in the envelope window, and a code string down the
+    left margin - which is why the preview is the thing to check.
     """
     path = Path(args.source)
     if not path.exists():
@@ -206,12 +262,15 @@ def _read_source(args):
     if path.suffix.lower() != ".pdf":
         fail(
             f"pennyblack posts PDFs, and {path.name} is not one.\n"
-            "  Export or print your document to PDF first, then send that.\n"
-            "  What you see in the PDF is exactly what comes out of the envelope."
+            "  Export or print your document to PDF first, then send that."
         )
-    if path.stat().st_size == 0:
+    data = path.read_bytes()
+    if not data:
         fail(f"{path} is empty")
-    return path
+    problems = checks.pdf_problems(data)
+    if problems:
+        fail(f"{path.name}: " + "\n  ".join(problems) + "\n  Nothing was uploaded.")
+    return path, data
 
 
 def _join_lines(value):
@@ -229,7 +288,25 @@ def _join_lines(value):
     return str(value)
 
 
+def _checked(address):
+    """Validate one address, and refuse it if it is certainly wrong."""
+    address.validate()
+    problems = checks.address_problems(address)
+    if problems:
+        raise ValueError(f"{address.name or 'recipient'}: " + "\n  ".join(problems)
+                         + "\n  Nothing was uploaded.")
+    return address
+
+
 def _parse_recipient(args):
+    if getattr(args, "address_from_pdf", False):
+        given = [f"--{f.replace('_', '-')}" for f in ("name", "line", "postcode", "to_file")
+                 if getattr(args, f, None)]
+        if given:
+            fail(f"--address-from-pdf reads the address from the PDF, so {', '.join(given)} "
+                 "cannot be used with it. Use one or the other.")
+        return []
+
     if args.to_file:
         data = json.loads(Path(args.to_file).read_text(encoding="utf-8"))
         entries = data if isinstance(data, list) else [data]
@@ -241,20 +318,19 @@ def _parse_recipient(args):
                 postcode=e.get("postcode", ""),
                 country=e.get("country", "GB"),
             )
-            addr.validate()
-            out.append(addr)
+            out.append(_checked(addr))
         return out
 
     missing = [f for f in ("name", "line", "postcode") if not getattr(args, f, None)]
     if missing:
         fail(
-            "a recipient needs --name, --line and --postcode (or --to-file with JSON).\n"
+            "a recipient needs --name, --line and --postcode (or --to-file with JSON,\n"
+            "  or --address-from-pdf when the address is already on page 1).\n"
             f"  missing: {', '.join(missing)}"
         )
     addr = Address(name=args.name, line=_join_lines(args.line), postcode=args.postcode,
                    country=args.country)
-    addr.validate()
-    return [addr]
+    return [_checked(addr)]
 
 
 def cmd_draft(args):
@@ -266,8 +342,9 @@ def cmd_draft(args):
     if not prov.supports(args.service):
         fail(f"{prov.name} does not offer '{args.service}'. Try: pennyblack services")
 
-    source = _read_source(args)
+    source, data = _read_source(args)
     recipients = _parse_recipient(args)
+    warnings = checks.pdf_warnings(data)
 
     draft = prov.draft(
         source=source,
@@ -281,8 +358,24 @@ def cmd_draft(args):
         confidential=args.confidential,
         background_first=args.background_first,
         background_other=args.background_other,
+        address_from_pdf=args.address_from_pdf,
     )
-    return _describe_draft(draft, args.json)
+
+    warnings += checks.sheet_warnings(draft.sheets_per_letter, args.envelope,
+                                      prov.envelope_capacity)
+    if args.address_from_pdf:
+        if not any(_address_lines(a)[1:] for a in draft.addresses):
+            warnings.append("the provider read no address from the PDF. Do not send "
+                            f"this draft. Cancel it with: pennyblack cancel {draft.id}")
+        for a in draft.addresses:
+            if (a.country or "GB").upper() in ("GB", "UK") and a.postcode \
+                    and not checks.gb_postcode_ok(a.postcode):
+                warnings.append(f"the postcode read from the PDF, {a.postcode!r}, is "
+                                "not a UK postcode. Check page 1 of the preview.")
+
+    preview_file = _save_preview(prov, draft)
+    return _describe_draft(draft, args.json, preview_file=preview_file,
+                           warnings=warnings, address_from_pdf=args.address_from_pdf)
 
 
 def _send_entry(draft):
@@ -628,6 +721,9 @@ def build_parser():
     s.add_argument("--postcode", help="recipient postcode")
     s.add_argument("--country", default="GB", help="ISO country code (default: GB)")
     s.add_argument("--to-file", help="JSON file with one recipient or a list of them")
+    s.add_argument("--address-from-pdf", action="store_true",
+                   help="give no recipient, and let the provider read the address "
+                        "from the envelope window on page 1 of the PDF")
     s.add_argument("--reference", help="your own label for this job, shown in the dashboard")
     s.add_argument("--envelope", default="c5", choices=["c4", "c5", "c4_plus", "a4_box"])
     s.add_argument("--single-sided", action="store_true", help="print one side per sheet")

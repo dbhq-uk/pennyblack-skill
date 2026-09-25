@@ -165,6 +165,14 @@ class Draft:
     recipients: list = field(default_factory=list)
     preview_url: Optional[str] = None
     raw: dict = field(default_factory=dict)
+    #: Each recipient's address as the provider holds it - what it will print
+    #: in the envelope window. With --address-from-pdf, this is what the
+    #: provider read from the file.
+    addresses: list = field(default_factory=list)
+    #: The most sheets any one letter in the job uses. `sheets` is the total
+    #: across every letter, which says nothing about whether one fits its
+    #: envelope.
+    sheets_per_letter: int = 0
 
 
 @dataclass
@@ -211,6 +219,9 @@ class Provider:
     #: cannot offer a service simply leave it out, and pennyblack will say so
     #: plainly rather than silently downgrading it.
     service_map: dict = {}
+    #: How many sheets each envelope size holds. A letter with more sheets
+    #: than its envelope holds is moved to a bigger one, and `draft` warns.
+    envelope_capacity: dict = {}
 
     def __init__(self, config: dict):
         self.config = config
@@ -220,6 +231,11 @@ class Provider:
 
     def draft(self, *, source, recipients, service, reference=None,
               testmode=True, **options) -> Draft:
+        """Create an unconfirmed job. Nothing is printed or charged.
+
+        `recipients` may be empty only when `options["address_from_pdf"]` is
+        true, and then the provider reads the address from page 1 of the file.
+        """
         raise NotImplementedError
 
     def retrieve_draft(self, draft_id: str) -> Draft:

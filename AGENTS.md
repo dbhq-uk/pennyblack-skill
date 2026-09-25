@@ -18,7 +18,8 @@ change is wrong.
 **There is no single command that creates and posts a letter.**
 
 `draft` creates an unconfirmed job. It costs nothing, prints nothing, and
-returns the real price plus a preview URL of the actual letter. `send` commits a
+returns the real price plus a preview of the actual letter, saved to a local
+file so the agent can open page 1 and check the address. `send` commits a
 specific job by id, and that is the only thing that spends money.
 
 Do not add a `--send-now`, a `--yes` on `draft`, or any other shortcut that
@@ -85,7 +86,16 @@ letter arrives, and the sender cannot check it once the envelope is sealed. A
 comma-joined address shipped in the first version and wrapped mid-address in the
 envelope window on a real PO Box letter, which was only found after it had gone.
 `--line` is repeatable and joined with newlines; `test_address.py` holds that
-down, including that it is never joined with a comma again.
+down, including that it is never joined with a comma again. `draft` also
+refuses an address given as one line with commas in it, and a UK postcode in
+the wrong format, before anything is uploaded (`checks.py`, `test_checks.py`).
+
+**The PDF is not quite what gets printed, so the preview is the check.** The
+provider prints the address onto page 1 where the envelope window falls, and a
+code string down the left margin. Do not describe pennyblack as posting the PDF
+"exactly" as given: what you see in the preview is what comes out. `draft`
+saves the preview to a private temporary file, and SKILL.md makes the agent
+open page 1 before it asks for "send it".
 
 **Standard library only.** Python 3.9 floor. No dependencies, no virtualenv, no
 build step. This is a hard constraint, not a preference - a skill that needs
@@ -98,6 +108,7 @@ skills/pennyblack/
   SKILL.md                     the agent-facing instructions
   scripts/
     pennyblack.py              CLI, safety rails, output
+    checks.py                  cheap checks on the PDF and the address, before upload
     config.py                  ~/.dbhq/pennyblack/ - key at 600, dir at 700
     ledger.py                  <git root>/.pennyblack/ - what was posted
     providers/
