@@ -14,6 +14,10 @@ Three things are kept per letter:
   is not captured at the moment of sending it is gone.
 - a README, because the folder holds names and postal addresses
 
+A test send is kept apart, in `test.jsonl`, with its document named `test-...`.
+Nothing was posted, so it must never sit among the letters that were, where a
+reader or a total could count it as one.
+
 `sent.jsonl` is append-only and one line per letter on purpose. Two sessions
 posting letters produce two lines and a conflict resolves by keeping both. A
 rendered markdown table would conflict on every concurrent write, and keeping a
@@ -36,6 +40,12 @@ except Exception:  # no time zone database on this machine
 
 LEDGER_DIRNAME = ".pennyblack"
 SENT_FILENAME = "sent.jsonl"
+TEST_FILENAME = "test.jsonl"
+
+
+def filename(testmode=False) -> str:
+    """Where a job's lines go: real letters in sent.jsonl, test sends apart."""
+    return TEST_FILENAME if testmode else SENT_FILENAME
 
 README = """# Posted letters
 
@@ -49,6 +59,8 @@ This folder is the record of physical letters sent from this repository with
 - `*.pdf` - the exact document that was posted, captured at the moment of
   sending. The provider's own preview link expires within the hour, so this is
   the only durable copy of what actually went in the envelope.
+- `test.jsonl` and `test-*.pdf` - test sends. Nothing was printed or posted.
+  They are kept apart so that they are never mistaken for real letters.
 
 ## Before you commit this
 
@@ -106,11 +118,13 @@ def uk_time(stamp) -> datetime:
 
 
 def document_name(entry: dict) -> str:
-    """A filename that sorts by date and says who it went to."""
+    """A filename that sorts by date and says who it went to. A test send's
+    name starts with `test-`, so it cannot pass for a letter that was posted."""
     when = (uk_time(entry.get("confirmed_at")) or datetime.now(tz=UK)).strftime("%Y-%m-%d")
     who = _slug((entry.get("recipients") or ["letter"])[0])
     short = (entry.get("id") or "")[-8:] or "unknown"
-    return f"{when}-{who}-{short}.pdf"
+    prefix = "test-" if entry.get("testmode") else ""
+    return f"{prefix}{when}-{who}-{short}.pdf"
 
 
 def ensure_dir(path: Path) -> Path:
@@ -124,8 +138,8 @@ def ensure_dir(path: Path) -> Path:
 def record(entry: dict, *, log_dir: Path, document: bytes = None) -> dict:
     """Append one letter to the record, and keep the document beside it.
 
-    Returns the paths written, so the caller can tell the user where the
-    evidence went.
+    A test send goes to test.jsonl, never sent.jsonl. Returns the paths
+    written, so the caller can tell the user where the evidence went.
     """
     ensure_dir(log_dir)
     written = {"dir": log_dir, "document": None}
@@ -137,24 +151,25 @@ def record(entry: dict, *, log_dir: Path, document: bytes = None) -> dict:
         written["document"] = target
 
     line = json.dumps(entry, sort_keys=True, ensure_ascii=False)
-    sent = log_dir / SENT_FILENAME
+    sent = log_dir / filename(entry.get("testmode"))
     with sent.open("a", encoding="utf-8") as fh:
         fh.write(line + "\n")
     written["sent"] = sent
     return written
 
 
-def record_event(event: dict, *, log_dir: Path) -> Path:
+def record_event(event: dict, *, log_dir: Path, testmode=False) -> Path:
     """Append something that happened to a letter after it was sent.
 
     `event` carries an "event" name and the print job "id". The time is added
     here. The send line is never rewritten, so the file stays append-only and
-    a merge still resolves by keeping both sides.
+    a merge still resolves by keeping both sides. A test job's events go to
+    test.jsonl with its send line.
     """
     ensure_dir(log_dir)
     event = dict(event)
     event.setdefault("at", int(datetime.now(tz=timezone.utc).timestamp()))
-    sent = log_dir / SENT_FILENAME
+    sent = log_dir / filename(testmode)
     with sent.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
     return sent
@@ -191,18 +206,21 @@ def record_update(print_id: str, letters_now: list, *, log_dir: Path) -> Path:
                         log_dir=log_dir)
 
 
-def contains(log_dir: Path, print_id: str) -> bool:
+def contains(log_dir: Path, print_id: str, testmode=False) -> bool:
     """True if the record already holds a send line for this print job.
 
     `send` checks this before recording a job it finds already confirmed, so
     that a retry writes the missing line once and never a second copy. Only
     send lines count: a cancel line for the job does not mean it was recorded.
+    A test job is looked for in test.jsonl, a real one in sent.jsonl.
     """
-    return any(e.get("id") == print_id for e in letters(read(log_dir)))
+    return any(e.get("id") == print_id
+               for e in letters(read(log_dir, filename(testmode))))
 
 
-def read(log_dir: Path) -> list:
-    sent = Path(log_dir) / SENT_FILENAME
+def read(log_dir: Path, name: str = SENT_FILENAME) -> list:
+    """The lines of one record file, oldest first. sent.jsonl by default."""
+    sent = Path(log_dir) / name
     if not sent.exists():
         return []
     out = []

@@ -368,7 +368,21 @@ class TestLogTotal(unittest.TestCase):
     def test_test_letters_are_left_out_of_the_total(self):
         self.letters(3)
         self.letters(30, testmode=True, pence=500)
-        self.assertIn("33 letter(s) recorded, £3.00 spent live", self.log())
+        out = self.log()
+        self.assertIn("3 letter(s) recorded, £3.00 spent live", out)
+        self.assertIn("30 test send(s) in test.jsonl, not shown", out)
+
+    def test_old_test_lines_in_sent_jsonl_stay_out_of_the_total(self):
+        """Records written before test sends moved to test.jsonl still have
+        test lines in sent.jsonl. They must not count as money spent."""
+        self.letters(3)
+        with (self.log_dir / "sent.jsonl").open("a", encoding="utf-8") as fh:
+            for n in range(2):
+                fh.write(json.dumps({"id": f"print_old_{n}", "cost_pence": 500,
+                                     "testmode": True, "recipients": ["Acme Ltd"]}) + "\n")
+        out = self.log()
+        self.assertIn("5 letter(s) recorded, £3.00 spent live", out)
+        self.assertIn("[test]", out)
 
     def test_no_note_when_everything_is_shown(self):
         self.letters(5)
@@ -689,6 +703,102 @@ class TestAddressFromPdf(_DraftCase):
         self.assertNotEqual(code, 0)
         self.assertIn("one or the other", err)
         self.assertEqual(prov.called("draft"), [])
+
+
+class TestTestSends(unittest.TestCase):
+    """A test draft can be sent. Nothing is printed or posted, so nothing in
+    the output, the JSON or the record may read as if it were."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def send(self, prov, *extra):
+        with stub_provider(prov):
+            return run(["send", prov.job.id, "--yes", "--log-dir", str(self.log_dir), *extra])
+
+    def test_says_not_posted_before_anything_else(self):
+        code, out, err = self.send(StubProvider(job=_job(testmode=True)))
+        self.assertEqual(code, 0, err)
+        first = next(ln for ln in out.splitlines() if ln.strip())
+        self.assertIn("TEST - NOT POSTED", first)
+        self.assertNotIn("LIVE", out)
+
+    def test_json_says_posted_false(self):
+        code, out, _ = self.send(StubProvider(job=_job(testmode=True)), "--json")
+        self.assertEqual(code, 0)
+        self.assertIs(json.loads(out)["posted"], False)
+
+    def test_a_live_send_says_posted_true(self):
+        code, out, _ = self.send(StubProvider(), "--json")
+        self.assertIs(json.loads(out)["posted"], True)
+
+    def test_a_live_send_leads_with_live(self):
+        _, out, _ = self.send(StubProvider())
+        first = next(ln for ln in out.splitlines() if ln.strip())
+        self.assertIn("LIVE - POSTED", first)
+
+    def test_leaves_sent_jsonl_alone_and_writes_test_jsonl(self):
+        code, out, _ = self.send(StubProvider(job=_job(testmode=True)), "--json")
+        self.assertEqual(code, 0)
+        self.assertFalse((self.log_dir / "sent.jsonl").exists())
+        tests = ledger.read(self.log_dir, "test.jsonl")
+        self.assertEqual([e["id"] for e in tests], ["print_stub0001"])
+        got = json.loads(out)
+        self.assertEqual(got["ledger"], str(self.log_dir / "test.jsonl"))
+        self.assertTrue(got["document"].startswith("test-"), got["document"])
+
+    def test_a_retried_test_send_is_not_recorded_twice(self):
+        prov = StubProvider(job=_job(testmode=True))
+        self.send(prov)
+        code, _, err = self.send(prov)
+        self.assertNotEqual(code, 0)
+        self.assertIn("already in the record", err)
+        self.assertEqual(len(ledger.read(self.log_dir, "test.jsonl")), 1)
+        self.assertEqual(len(prov.called("confirm")), 1)
+
+    def test_a_test_send_is_not_in_the_log(self):
+        self.send(StubProvider(job=_job(testmode=True)))
+        _, out, _ = run(["log", "--log-dir", str(self.log_dir)])
+        self.assertIn("nothing posted from this repository yet", out)
+
+    def test_draft_output_leads_with_the_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "l.pdf"
+            pdf.write_bytes(A4_PDF)
+            for live, word in ((False, "TEST"), (True, "LIVE")):
+                with self.subTest(live=live), \
+                        mock.patch.object(pennyblack.tempfile, "tempdir", tmp), \
+                        stub_provider(StubProvider()):
+                    _, out, err = run(["draft", str(pdf), "--service", "first",
+                                       *_DraftCase.ADDRESS, *(["--live"] if live else [])])
+                    first = next(ln for ln in out.splitlines() if ln.strip())
+                    self.assertTrue(first.strip().startswith(word), first)
+
+    def test_status_and_cancel_say_test(self):
+        mailing = Mailing(id="ltr_1", status="draft", service="first", testmode=True)
+        with stub_provider(StubProvider(mailings=[mailing])):
+            _, out, _ = run(["status", "print_stub0001", "--log-dir", str(self.log_dir)])
+        self.assertTrue(next(ln for ln in out.splitlines() if ln.strip()).strip()
+                        .startswith("TEST"))
+        result = Cancellation(id="print_stub0001", deleted=False, testmode=True,
+                              letters=[Mailing(id="ltr_1", status="cancelled",
+                                               service="first", testmode=True)])
+        with stub_provider(StubProvider(cancellation=result)):
+            _, out, _ = run(["cancel", "print_stub0001", "--log-dir", str(self.log_dir)])
+        self.assertTrue(next(ln for ln in out.splitlines() if ln.strip()).strip()
+                        .startswith("TEST"))
+
+    def test_a_test_cancel_goes_to_test_jsonl(self):
+        result = Cancellation(id="print_stub0001", deleted=False, testmode=True,
+                              letters=[Mailing(id="ltr_1", status="cancelled", service="first")])
+        with stub_provider(StubProvider(cancellation=result)):
+            run(["cancel", "print_stub0001", "--log-dir", str(self.log_dir)])
+        self.assertFalse((self.log_dir / "sent.jsonl").exists())
+        self.assertEqual(ledger.read(self.log_dir, "test.jsonl")[0]["event"], "cancel")
 
 
 class TestCancel(unittest.TestCase):

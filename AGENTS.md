@@ -33,6 +33,12 @@ and reconsider the change.
 
 **Drafts default to test mode.** `--live` is opt-in. Do not flip the default.
 
+**A test send never reads as posted.** `send` on a test draft leads with
+`TEST - NOT POSTED`, returns `posted: false` in `--json`, and is recorded in
+`test.jsonl`, never `sent.jsonl`, so a test cannot be counted or reported as a
+letter that went. The output of `draft`, `send`, `status` and `cancel` starts
+with `LIVE` or `TEST`. `TestTestSends` in `tests/test_cli.py` holds this.
+
 **An unsupported postage service is an error, never a downgrade.** If someone
 asks for Special Delivery and the provider cannot do it, the tool must refuse.
 Silently posting second class when Special Delivery was requested would be the

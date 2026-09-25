@@ -296,6 +296,12 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(m.returned_reason, "Not at this address")
         self.assertEqual(m.returned_date, 1789900000)
 
+    def test_each_letter_carries_the_jobs_test_flag(self):
+        prov = StubbedIntelliprint({"api_key": "k"}, _payload(testmode=True))
+        self.assertIs(prov.status("prt_test123")[0].testmode, True)
+        prov = StubbedIntelliprint({"api_key": "k"}, _payload(testmode=False))
+        self.assertIs(prov.status("prt_test123")[0].testmode, False)
+
     def test_absent_tracking_number_is_none_not_empty_string(self):
         prov = StubbedIntelliprint({"api_key": "k"}, _payload())
         self.assertIsNone(prov.status("prt_test123")[0].tracking_number)
@@ -327,6 +333,7 @@ class TestCancel(unittest.TestCase):
         self.assertEqual([(m.recipient, m.status) for m in result.letters],
                          [("Acme Ltd", "cancelled"), ("Bloggs & Co", "printing")])
         self.assertEqual(result.letters[0].service, "first")
+        self.assertIs(result.testmode, False)
 
     def test_nothing_left_to_cancel_says_so(self):
         """A 400 here is not an address problem, whatever the generic hint says."""

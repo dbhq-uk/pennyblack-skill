@@ -214,5 +214,16 @@ class TestNoDefaultService(unittest.TestCase):
         self.assertIn("`--service` - required", text)
 
 
+class TestLiveFromTheStart(unittest.TestCase):
+    """A test draft sent by mistake used to print "posted" first."""
+
+    def test_skill_md_says_real_letters_are_drafted_live(self):
+        text = " ".join(SKILL_MD.read_text(encoding="utf-8").split()).lower()
+        self.assertIn("a real letter is drafted with `--live` from the start", text)
+        self.assertIn("never for approval", text)
+        self.assertIn("test - not posted", text)
+        self.assertIn("`posted: false`", text)
+
+
 if __name__ == "__main__":
     unittest.main()

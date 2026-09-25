@@ -48,6 +48,14 @@ https://account.intelliprint.net/api_keys) and writes it to
 Drafts are **test mode** until `--live` is passed, so the whole flow can be
 rehearsed for nothing.
 
+**A real letter is drafted with `--live` from the start.** A test draft is for
+trying the tool, never for approval. Do not show one to the user and ask for
+"send it": sending it posts nothing, and they would think the letter had gone.
+The output of `draft`, `send`, `status` and `cancel` starts with `LIVE` or
+`TEST`. `send` on a test draft starts with `TEST - NOT POSTED`, returns
+`posted: false` in `--json`, and is recorded in `test.jsonl`, never
+`sent.jsonl`.
+
 ## Posting a letter
 
 **1. Draft it.**
@@ -109,8 +117,9 @@ Or bin the draft with `cancel print_...`. Nothing was printed or charged.
 record that cannot be written, run the same `send` again. A job that is already
 confirmed is never confirmed twice: if it is missing from the record, `send`
 records it and says so; if it is already there, `send` changes nothing. With
-`--json`, `send` returns `captured` (was the PDF kept), `document` and `ledger`
-(where the record went). Tell the user if `captured` is false.
+`--json`, `send` returns `posted` (false for a test send, so read it first),
+`captured` (was the PDF kept), `document` and `ledger` (where the record went).
+Tell the user if `captured` is false.
 
 Ids look like `print_YheDXex1cHsyD9xosrgZu`.
 
@@ -210,6 +219,7 @@ sent is a business record and belongs with the work, in version control.
 .pennyblack/
   sent.jsonl                             one line per letter, append-only
   2026-09-17-acme-ltd-DpEfeInS.pdf       the document that was actually posted
+  test.jsonl, test-*.pdf                 test sends, kept apart - nothing posted
   README.md                              warns it holds names and addresses
 ```
 
