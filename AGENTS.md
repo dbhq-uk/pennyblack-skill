@@ -90,8 +90,12 @@ and goes ahead, as it did before the check existed. `TestPublicRepository` in
 one line. After that, `cancel`, `status` and `log --refresh` append event lines
 (a cancel, a tracking number, a posting date, a return and its reason). Nothing
 rewrites an earlier line, so a merge still resolves by keeping both sides.
-`status` writes only for a job that is already in the record, so it never
-starts a record of names and addresses somewhere new.
+`status` and `cancel` write only for a job that is already in the record, so
+neither starts a record of names and addresses somewhere new. Neither runs the
+public-repository check, and this is why they do not need it. A cancel for a job
+that is not in the record still goes through: the line it would have written is
+printed on stderr instead, to be added by hand to the record the letter was sent
+into. `TestCancel` and `TestPublicRepository` in `tests/test_cli.py` hold this.
 
 **The document is captured at send time or never.** The provider's preview link
 is signed and short-lived. If a change defers fetching it, the record silently

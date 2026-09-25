@@ -689,18 +689,28 @@ def cmd_cancel(args):
     result = prov.cancel(args.id)
     stopped = [m for m in result.letters if m.status == "cancelled"]
 
-    written, problem = None, None
+    written, problem, unrecorded = None, None, None
     if not result.deleted:
-        # A confirmed job was posted and is in the record, so what happened to
-        # it belongs there too. Appended, never rewritten.
+        # What happened to a posted job belongs in its record, appended and
+        # never rewritten. But only in a record that already holds the job,
+        # the same rule as status: cancel runs no public-repository check, so
+        # it must never start a record of names and addresses somewhere new.
+        print_id = result.id or args.id
+        testmode = bool(result.testmode)
         log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+        record_file = log_dir / ledger.filename(testmode)
+        event = {
+            "event": "cancel",
+            "id": print_id,
+            "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
+                        for m in result.letters],
+            "at": int(time.time()),
+        }
         try:
-            written = ledger.record_event({
-                "event": "cancel",
-                "id": result.id or args.id,
-                "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
-                            for m in result.letters],
-            }, log_dir=log_dir, testmode=bool(result.testmode))
+            if ledger.contains(log_dir, print_id, testmode=testmode):
+                written = ledger.record_event(event, log_dir=log_dir, testmode=testmode)
+            else:
+                unrecorded = event
         except OSError as exc:
             problem = f"the cancel went through, but the record could not be updated: {exc}"
 
@@ -734,6 +744,17 @@ def cmd_cancel(args):
         if written:
             print(f"  recorded   {written}")
         print()
+
+    if unrecorded:
+        # The cancel went through. The line goes to stderr, never to a new
+        # file, so it can be added to the record the letter was sent into.
+        print(json.dumps(unrecorded, sort_keys=True, ensure_ascii=False), file=sys.stderr)
+        print(f"note: {unrecorded['id']} is not in the record at {record_file}, so "
+              "nothing was written there.\n"
+              "  The cancel went through. Add the line above by hand to the "
+              f"{ledger.filename(testmode)}\n"
+              "  of the record this letter was sent into, such as the --log-dir "
+              "it was sent with.", file=sys.stderr)
 
     if problem:
         fail(problem)
@@ -921,7 +942,8 @@ def build_parser():
                        help="throw away a draft, or recall a sent letter that has "
                             "not been printed yet")
     s.add_argument("id")
-    s.add_argument("--log-dir", help="where the record lives "
+    s.add_argument("--log-dir", help="where the record lives. The cancel is "
+                   "written only if the job is already in it "
                    "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_cancel)
 

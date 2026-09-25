@@ -1123,6 +1123,27 @@ class TestPublicRepository(unittest.TestCase):
         self.assertIn("could not check whether", err)
         self.assertIn("known GitHub host", err)
 
+    def test_cancel_writes_nothing_into_a_repository_that_does_not_hold_the_job(self):
+        """A letter sent with --log-dir to a private folder, then cancelled from
+        a public repository with no --log-dir. The repository must not get a
+        record of names it never had, and the private record is left alone."""
+        ledger.record({"id": "print_stub0001", "cost_pence": 521, "testmode": False,
+                       "recipients": ["Acme Ltd"]}, log_dir=self.private)
+        (self.bin / "gh").write_text(FAKE_GH)
+        (self.bin / "gh").chmod(0o755)
+        result = Cancellation(id="print_stub0001", deleted=False, testmode=False, letters=[
+            Mailing(id="ltr_1", status="cancelled", service="signed", recipient="Acme Ltd")])
+        prov = StubProvider(cancellation=result)
+        env = {"PATH": str(self.bin), "FAKE_GH_VISIBILITY": "PUBLIC",
+               "FAKE_GH_LOG": str(self.gh_log)}
+        with mock.patch.dict(os.environ, env), stub_provider(prov):
+            code, _, err = run(["cancel", "print_stub0001"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(prov.called("cancel"), [("cancel", "print_stub0001")])
+        self.assertFalse(self.record.exists())
+        self.assertEqual(len(ledger.read(self.private)), 1)
+        self.assertIn("Acme Ltd", err)
+
 
 class TestSetup(unittest.TestCase):
     """setup used to need a terminal, and the only other way in was
@@ -1273,12 +1294,14 @@ class TestTestSends(unittest.TestCase):
                         .startswith("TEST"))
 
     def test_a_test_cancel_goes_to_test_jsonl(self):
+        ledger.record({"id": "print_stub0001", "cost_pence": 0, "testmode": True,
+                       "recipients": ["Acme Ltd"]}, log_dir=self.log_dir)
         result = Cancellation(id="print_stub0001", deleted=False, testmode=True,
                               letters=[Mailing(id="ltr_1", status="cancelled", service="first")])
         with stub_provider(StubProvider(cancellation=result)):
             run(["cancel", "print_stub0001", "--log-dir", str(self.log_dir)])
         self.assertFalse((self.log_dir / "sent.jsonl").exists())
-        self.assertEqual(ledger.read(self.log_dir, "test.jsonl")[0]["event"], "cancel")
+        self.assertEqual(ledger.read(self.log_dir, "test.jsonl")[-1]["event"], "cancel")
 
 
 class TestCancel(unittest.TestCase):
@@ -1330,6 +1353,51 @@ class TestCancel(unittest.TestCase):
         self.assertEqual(event["event"], "cancel")
         self.assertEqual(event["id"], "print_stub0001")
         self.assertEqual([ltr["status"] for ltr in event["letters"]], ["cancelled", "printing"])
+
+    def test_a_job_not_in_the_record_writes_nothing(self):
+        """Like status, cancel never starts a record of names somewhere new.
+        The cancel still reaches the provider, and the line it would have
+        written goes to stderr so it can be added to the right record."""
+        prov = StubProvider(cancellation=self.mixed())
+        with stub_provider(prov):
+            code, out, err = run(["cancel", "print_stub0001",
+                                  "--log-dir", str(self.log_dir)])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(prov.called("cancel"), [("cancel", "print_stub0001")])
+        self.assertFalse(self.log_dir.exists())
+        self.assertIn("1 of 2", out)
+        line = json.loads(next(ln for ln in err.splitlines() if ln.startswith("{")))
+        self.assertEqual(line["event"], "cancel")
+        self.assertEqual(line["id"], "print_stub0001")
+        self.assertEqual([ltr["status"] for ltr in line["letters"]],
+                         ["cancelled", "printing"])
+        self.assertIn("at", line)
+        self.assertIn("not in the record", err)
+        self.assertIn(str(self.log_dir / "sent.jsonl"), err)
+
+    def test_a_test_job_not_in_the_record_writes_nothing(self):
+        result = Cancellation(id="print_stub0001", deleted=False, testmode=True,
+                              letters=[Mailing(id="ltr_1", status="cancelled",
+                                               service="first", testmode=True)])
+        code, _, err = self.cancel(result)
+        self.assertEqual(code, 0, err)
+        self.assertFalse(self.log_dir.exists())
+        self.assertIn(str(self.log_dir / "test.jsonl"), err)
+
+    def test_a_cancel_line_does_not_count_as_the_job_being_recorded(self):
+        """Only a send line puts a job in the record."""
+        ledger.record_event({"event": "cancel", "id": "print_stub0001", "letters": []},
+                            log_dir=self.log_dir)
+        self.cancel(self.mixed())
+        self.assertEqual(len(ledger.read(self.log_dir)), 1)
+
+    def test_json_says_nothing_was_recorded(self):
+        code, out, err = self.cancel(self.mixed(), "--json")
+        self.assertEqual(code, 0, err)
+        got = json.loads(out)
+        self.assertIsNone(got["ledger"])
+        self.assertEqual(got["cancelled"], 1)
+        self.assertFalse(self.log_dir.exists())
 
     def test_a_deleted_draft_writes_nothing(self):
         """Nothing was posted, so there is nothing to record."""
