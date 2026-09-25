@@ -1,14 +1,11 @@
 ---
 name: pennyblack
-description: Post a PDF as a physical letter in the UK, printed and delivered by Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, and returns the Royal Mail tracking number. Use when the user wants to post a document, put a PDF in the post, send something by recorded or signed-for delivery, write to someone by post rather than email, or check whether a letter that was posted has arrived. Trigger on phrases like "post this", "send this letter", "put this in the post", "send it recorded delivery", "signed for", "special delivery", "post the invoice", "did that letter arrive", "track that letter".
+description: Post a PDF as a physical letter in the UK, printed and delivered by Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, and returns the Royal Mail tracking number. Use when the user wants to put a PDF in the post, send a letter by Royal Mail, send something by recorded or signed-for delivery, write to someone by post rather than email, or check the status or tracking number of a letter sent with it. Not for social media posts or for posting entries to accounts. Trigger on phrases like "put this in the post", "post this letter", "send this by post", "send it recorded delivery", "send it signed for", "special delivery", "Royal Mail", "track that letter".
 ---
 
 # pennyblack
 
-Post a PDF. It is printed in Leeds and Royal Mail delivers it.
-
-Named after the Penny Black, the 1840 stamp that made it possible to pay once
-and have a letter carried anywhere.
+Post a PDF. A print house prints it and Royal Mail delivers it.
 
 **It does not convert or typeset anything.** It posts the user's PDF, with no
 letterhead unless they ask for one. The provider does add two things to page 1:
@@ -37,13 +34,20 @@ preview, show the user the cost and the preview, wait, then send.
 
 ## Setup
 
+The user runs this once, in their own terminal:
+
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" setup
 ```
 
-Prompts for an Intelliprint API key (from
-https://account.intelliprint.net/api_keys) and writes it to
+It asks for an Intelliprint API key (from
+https://account.intelliprint.net/api_keys) without echoing it, and writes it to
 `~/.dbhq/pennyblack/config.json` at mode 600.
+
+**Never put the key on a command line you run.** `--api-key` lands in the shell
+history and in this transcript. Ask the user to run `setup` themselves. With no
+terminal, `setup` takes the key piped in with `--api-key-stdin`, or from
+`PENNYBLACK_API_KEY`.
 
 Drafts are **test mode** until `--live` is passed, so the whole flow can be
 rehearsed for nothing.
@@ -155,17 +159,8 @@ ones are often bought for the wrong reason. `draft` has no default service and
 will not run without `--service`.
 
 Run `python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" services` for the list.
-The short version, for one A4 sheet, **excluding VAT**:
-
-| `--service` | What it is | Roughly |
-|---|---|---|
-| `second` | 2nd Class | £0.84 |
-| `first` | 1st Class | £1.94 |
-| `signed` | Signed For 1st Class | £4.34 |
-| `special` | Special Delivery by 1pm | £11.35 |
-
-VAT is added on top, so `signed` bills at about £5.21. The draft step always
-returns the real figure including VAT - quote that, not this table.
+The prices, excluding VAT, are in `references/postage.md`. `draft` returns the
+real figure including VAT - quote that, not the table.
 
 Read `references/postage.md` before advising anyone which to buy, because the
 obvious answer is often wrong. **It gives postage facts, not legal advice, and
@@ -286,8 +281,3 @@ Everything vendor-specific is confined to
 `scripts/providers/intelliprint.py`; the commands, the postage vocabulary and
 the draft/confirm flow are provider-neutral, so a second backend is a new file
 in `scripts/providers/` plus a line in the registry.
-
-Docsaway is the documented fallback if Intelliprint is unavailable: it also does
-Royal Mail Signed For by API, from £4.79, but gives no signature copy, offers no
-compensation, and is operated from Australia. Worse on price, evidence and data
-residency, which is why it is second.

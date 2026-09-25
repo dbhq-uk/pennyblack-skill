@@ -139,25 +139,19 @@ whole skill directory is symlinked untouched, while Codex does not, so its
 third-party packages - the floor is what CI proves, on 3.9.
 
 An Intelliprint API key, kept in `~/.dbhq/pennyblack/config.json` at mode
-600. **This skill spends money when it runs**, which is why `draft` and
+600. `pennyblack setup` asks for it without echoing it. With no terminal, pipe
+it in with `setup --api-key-stdin`, or set `PENNYBLACK_API_KEY` for that one
+command. Avoid `--api-key`, which puts the key in your shell history. **This skill spends money when it runs**, which is why `draft` and
 `send` are separate commands and drafts are test mode until `--live`.
 
 ## What it costs
 
-Prices below are the provider's published rate card effective 5 January 2026,
-for a single-sided A4 letter in a C5 envelope, excluding VAT, including
-printing, the envelope and the postage. `draft` always returns the real figure.
-
-| `--service` | Service | Price | Signature | Tracked |
-|---|---|---|---|---|
-| `second` | 2nd Class | £0.84 | | |
-| `first` | 1st Class | £1.94 | | |
-| `signed-second` | Signed For 2nd Class | £3.51 | yes | |
-| `signed` | Signed For 1st Class | £4.34 | yes | |
-| `tracked-48` | Tracked 48 | varies | optional | yes |
-| `tracked-24` | Tracked 24 | varies | optional | yes |
-| `special` | Special Delivery by 1pm | £11.35 | viewable | yes |
-| `special-9am` | Special Delivery by 9am | £48.97 | viewable | yes |
+The provider's published rate card, for a single-sided A4 letter in a C5
+envelope, excluding VAT, is in
+[`references/postage.md`](skills/pennyblack/references/postage.md), with what
+each service proves. It is kept in that one place because Royal Mail prices
+change. It covers printing, the envelope and the postage. `draft` always
+returns the real figure, including VAT.
 
 There is no minimum order, no monthly fee and no contract. You are billed for
 what you send.
@@ -236,6 +230,11 @@ OpenAPI spec, a per-letter rate card and a test mode.
 It was chosen over Stannp, Docmail, PostGrid, Lob and Docsaway because it is the
 only one that publishes both a Signed For price *and* a signed-for field in a
 public API spec, and returns the Royal Mail tracking number.
+
+Docsaway is the documented fallback if Intelliprint is unavailable. It also does
+Royal Mail Signed For by API, from £4.79, but gives no signature copy, offers no
+compensation, and is operated from Australia. It is worse on price, evidence
+and data residency, which is why it is second.
 
 Most UK hybrid-mail
 providers cannot offer Signed For at all: an automated enclosing line cannot

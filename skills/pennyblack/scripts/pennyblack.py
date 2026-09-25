@@ -16,6 +16,7 @@ that is not an oversight. Physical post cannot be recalled once it is printed.
 
 import argparse
 import decimal
+import getpass
 import json
 import os
 import sys
@@ -227,13 +228,35 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
 # commands
 
 
+def _api_key(args):
+    """The API key, from the first place it was given.
+
+    --api-key still works, but it puts the key in the shell history and in an
+    agent's transcript, so the other ways come first in the help. At a
+    terminal the key is asked for without echoing it. With no terminal and no
+    key, setup says how to give one, rather than failing on an empty read.
+    """
+    if args.api_key:
+        return args.api_key.strip()
+    if args.api_key_stdin:
+        return sys.stdin.readline().strip()
+    from_env = os.environ.get(cfg.KEY_ENV, "").strip()
+    if from_env:
+        return from_env
+    if not sys.stdin.isatty():
+        fail("no API key given, and no terminal to ask for one.\n"
+             "  Pipe it in:  <command that prints the key> | pennyblack setup --api-key-stdin\n"
+             f"  or set {cfg.KEY_ENV} for this one command,\n"
+             "  or run setup in a terminal. Do not put the key on the command line.")
+    try:
+        return getpass.getpass("Intelliprint API key (from "
+                               "https://account.intelliprint.net/api_keys): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        fail("cancelled")
+
+
 def cmd_setup(args):
-    key = args.api_key
-    if not key:
-        try:
-            key = input("Intelliprint API key (from https://account.intelliprint.net/api_keys): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            fail("cancelled")
+    key = _api_key(args)
     if not key:
         fail("no API key given")
     path = cfg.save(key, provider=args.provider)
@@ -832,7 +855,11 @@ def build_parser():
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("setup", parents=[common], help="store your API key")
-    s.add_argument("--api-key")
+    given = s.add_mutually_exclusive_group()
+    given.add_argument("--api-key-stdin", action="store_true",
+                       help="read the key from standard input, for a script with no terminal")
+    given.add_argument("--api-key", help="the key itself. Avoid: it lands in the shell "
+                       f"history. Use --api-key-stdin or {cfg.KEY_ENV} instead")
     s.add_argument("--provider", default=cfg.DEFAULT_PROVIDER)
     s.set_defaults(func=cmd_setup)
 
