@@ -49,8 +49,8 @@ pennyblack draft notice.pdf --name "Acme Ltd" \
 #              https://... (signed link, expires in about an hour)
 
 # 2. Open page 1 of the preview and check the address window.
-# 3. Then, and only then:
-pennyblack send print_YheDXex1cHsyD9xosrgZu
+# 3. Then, and only then, at the price that was approved:
+pennyblack send print_YheDXex1cHsyD9xosrgZu --expect-cost 5.21
 ```
 
 ## What makes it different
@@ -65,6 +65,11 @@ not really a PDF or is encrypted, an address given as one line with commas in
 it, and a UK postcode in the wrong format. It warns when a page is not A4 or a
 letter will not fit its envelope. None of that replaces looking at the preview,
 which is why it saves one.
+
+**`send` is bound to the price you approved.** Pass `--expect-cost` and `send`
+refuses, posting nothing, if the job now costs something else. And one draft
+holds at most 5 recipients unless you say otherwise with `--max-recipients`,
+because one `send` posts a letter to each of them.
 
 **A mistake spotted just after `send` can often still be stopped.** Until
 printing starts, `cancel` recalls each letter still waiting to print, and the

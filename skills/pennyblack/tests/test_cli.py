@@ -468,6 +468,40 @@ class TestSend(unittest.TestCase):
         self.assertEqual(got["ledger"], str(self.log_dir / "sent.jsonl"))
         self.assertIs(got["recovered"], False)
 
+    def test_expect_cost_that_matches_goes_ahead(self):
+        for given in ("5.21", "£5.21", " 5.210 "):
+            with self.subTest(given=given):
+                prov = StubProvider()
+                code, _, err = self.send(prov, "--expect-cost", given)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(prov.called("confirm")), 1)
+                self.log_dir.joinpath("sent.jsonl").unlink()
+
+    def test_expect_cost_that_differs_is_refused_and_nothing_is_confirmed(self):
+        """The job changed after the user saw it, say an envelope upgrade."""
+        prov = StubProvider(job=_job(cost=Cost(700, 140, 840)))
+        code, _, err = self.send(prov, "--expect-cost", "5.21")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.called("confirm"), [])
+        self.assertIn("£8.40", err)
+        self.assertIn("Nothing was posted", err)
+        self.assertEqual(ledger.read(self.log_dir), [])
+
+    def test_expect_cost_is_compared_to_the_penny(self):
+        prov = StubProvider()
+        code, _, _ = self.send(prov, "--expect-cost", "5.20")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.called("confirm"), [])
+
+    def test_expect_cost_that_is_not_an_amount_is_refused(self):
+        for given in ("five", "5.215", "-5.21", "nan"):
+            with self.subTest(given=given):
+                prov = StubProvider()
+                code, _, err = self.send(prov, "--expect-cost", given)
+                self.assertNotEqual(code, 0)
+                self.assertIn("--expect-cost", err)
+                self.assertEqual(prov.called("confirm"), [])
+
     def test_json_says_when_the_document_was_not_captured(self):
         code, out, _ = self.send(StubProvider(document=None), "--json")
         self.assertEqual(code, 0)
@@ -601,6 +635,51 @@ class TestDraftChecks(_DraftCase):
         prov = StubProvider(job=_job(sheets=15, sheets_per_letter=15))
         _, _, out, _ = self.draft(prov)
         self.assertNotIn("WARNING", out)
+
+
+class TestRecipientCap(_DraftCase):
+    """One send posts a letter to every recipient on the job. Bulk mail is
+    something this skill does not do, so a long list needs saying so."""
+
+    def to_file(self, count):
+        path = self.tmp / "to.json"
+        path.write_text(json.dumps([
+            {"name": f"Tenant {n}", "line": ["1 High Street", "Leeds"], "postcode": "LS1 1AA"}
+            for n in range(count)]))
+        return ["--to-file", str(path)]
+
+    def test_six_recipients_are_refused(self):
+        prov, code, _, err = self.draft(None, address=self.to_file(6))
+        self.assertNotEqual(code, 0)
+        self.assertIn("6 recipients", err)
+        self.assertIn("--max-recipients 6", err)
+        self.assertEqual(prov.called("draft"), [])
+
+    def test_five_recipients_are_allowed(self):
+        prov, code, _, err = self.draft(None, address=self.to_file(5))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("draft")[0][1]["recipients"]), 5)
+
+    def test_max_recipients_raises_the_cap(self):
+        prov, code, _, err = self.draft(None, "--max-recipients", "6",
+                                        address=self.to_file(6))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("draft")[0][1]["recipients"]), 6)
+
+    def test_max_recipients_below_one_is_refused(self):
+        prov, code, _, _ = self.draft(None, "--max-recipients", "0", address=self.to_file(1))
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.called("draft"), [])
+
+    def test_the_draft_shows_the_recipient_count(self):
+        _, _, out, _ = self.draft(None, address=self.to_file(3))
+        self.assertRegex(out, r"letters\s+3 - one to each recipient")
+        _, _, out, _ = self.draft(None, "--json", address=self.to_file(3))
+        self.assertEqual(json.loads(out)["recipient_count"], 3)
+
+    def test_a_single_letter_says_one(self):
+        _, _, out, _ = self.draft()
+        self.assertRegex(out, r"(?m)^\s+letters\s+1$")
 
 
 class TestService(_DraftCase):
