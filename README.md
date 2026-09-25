@@ -206,9 +206,12 @@ time.
 Use `--log-dir` to keep a particular client's letters with the rest of their
 correspondence instead.
 
-> **If your repository is public**, add `.pennyblack/` to `.gitignore` and use
-> `--log-dir` to keep the record somewhere private. It holds names and postal
-> addresses. The README written into the folder repeats this.
+> **If your repository is public**, `send` refuses to write the record into it
+> and posts nothing. It asks GitHub first, through `gh repo view`, before it
+> confirms anything. Use `--log-dir` to keep the record somewhere private. It
+> holds names and postal addresses. Without `gh`, or outside GitHub, `send`
+> cannot tell: it warns and goes ahead. The README written into the folder
+> repeats this.
 
 ## Input
 

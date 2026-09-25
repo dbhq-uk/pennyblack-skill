@@ -78,6 +78,14 @@ posted. Two tests assert the separation. Putting the record back in `$HOME`
 would hide a business record in a dotfile; putting the key in the repository
 would commit it.
 
+**The record is never written into a public repository by default.** Before
+`send` confirms anything, `_check_not_public` asks `gh repo view --json
+visibility` in the repository, and refuses on `PUBLIC` unless `--log-dir` is
+given. It runs before the confirm, never after, so a refusal can never leave a
+posted letter out of the record. Without `gh`, or when `gh` cannot say, it warns
+and goes ahead, as it did before the check existed. `TestPublicRepository` in
+`tests/test_cli.py` holds this with a fake `gh` on `PATH`.
+
 **The record is append-only, and it keeps up with the letter.** `send` writes
 one line. After that, `cancel`, `status` and `log --refresh` append event lines
 (a cancel, a tracking number, a posting date, a return and its reason). Nothing

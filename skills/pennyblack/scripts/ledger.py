@@ -26,7 +26,10 @@ avoiding entirely. `pennyblack log` renders it instead.
 """
 
 import json
+import os
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,6 +71,9 @@ This folder is the record of physical letters sent from this repository with
 posted letters, and it is fine in a private repository. In a public one it is a
 personal-data disclosure, and under UK GDPR it is yours to answer for.
 
+`pennyblack send` refuses to write here when GitHub says the repository is
+public. It cannot ask when `gh` is not installed, so check for yourself.
+
 If this repository is public, add to `.gitignore`:
 
 ```
@@ -102,6 +108,40 @@ def resolve_dir(explicit=None, fallback: Path = None) -> Path:
     if root:
         return root / LEDGER_DIRNAME
     return fallback
+
+
+def visibility(root: Path):
+    """Ask GitHub whether the repository at `root` is public.
+
+    Returns (visibility, reason). `visibility` is what GitHub says - "PUBLIC",
+    "PRIVATE" or "INTERNAL" - or None when it could not be found out, and then
+    `reason` says why: `gh` is not installed, the repository is not on GitHub,
+    `gh` is not signed in, and so on.
+
+    `gh` runs in `root`, never prompts, and ignores GH_REPO, so the answer is
+    about the repository the record would be written into and no other.
+    """
+    gh = shutil.which("gh")
+    if not gh:
+        return None, "gh is not installed"
+    env = {k: v for k, v in os.environ.items() if k != "GH_REPO"}
+    env["GH_PROMPT_DISABLED"] = "1"
+    try:
+        proc = subprocess.run([gh, "repo", "view", "--json", "visibility"], cwd=str(root),
+                              env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"gh could not be run: {exc}"
+    if proc.returncode != 0:
+        said = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return None, "gh could not say" + (f": {said[-1]}" if said else "")
+    try:
+        value = json.loads(proc.stdout).get("visibility")
+    except (ValueError, AttributeError):
+        value = None
+    if not isinstance(value, str) or not value:
+        return None, "gh gave no visibility"
+    return value.upper(), ""
 
 
 def _slug(text: str, limit: int = 40) -> str:

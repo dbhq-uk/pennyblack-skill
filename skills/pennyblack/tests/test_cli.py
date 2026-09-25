@@ -8,6 +8,7 @@ import contextlib
 import dataclasses
 import io
 import json
+import os
 import sys
 import tempfile
 import time
@@ -1007,6 +1008,120 @@ class TestDraftSendRail(_DraftCase):
                     code, _, err = run(argv)
                 self.assertEqual(code, 0, err)
                 self.assertEqual(prov.called("confirm"), [])
+
+
+#: A stand-in for the GitHub CLI. It logs where and how it was run, then
+#: answers `gh repo view --json visibility` with $FAKE_GH_VISIBILITY, or fails
+#: the way gh does outside a GitHub repository. Shell builtins only, so it runs
+#: with nothing else on PATH.
+FAKE_GH = """#!/bin/sh
+printf '%s|%s|%s\\n' "$PWD" "$*" "${GH_REPO-unset}" >> "$FAKE_GH_LOG"
+if [ "$FAKE_GH_VISIBILITY" = FAIL ]; then
+  echo "none of the git remotes configured for this repository point to a known GitHub host" >&2
+  exit 1
+fi
+printf '{"visibility":"%s"}\\n' "$FAKE_GH_VISIBILITY"
+"""
+
+
+class TestPublicRepository(unittest.TestCase):
+    """The record holds names, postal addresses and a copy of each letter.
+    send asks GitHub whether the repository is public before it confirms
+    anything, and refuses if it is, unless --log-dir says where to put it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name).resolve()
+        self.repo = base / "repo"
+        (self.repo / ".git").mkdir(parents=True)
+        (self.repo / "letters").mkdir()
+        self.record = self.repo / ".pennyblack"
+        self.private = base / "private"
+        self.bin = base / "bin"
+        self.bin.mkdir()
+        self.gh_log = base / "gh.log"
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.repo / "letters")
+
+    def send(self, prov, visibility=None, *extra):
+        """send with no --log-dir unless given, and PATH holding only a fake
+        gh that answers `visibility`. With None there is no gh at all."""
+        if visibility is not None:
+            (self.bin / "gh").write_text(FAKE_GH)
+            (self.bin / "gh").chmod(0o755)
+        env = {"PATH": str(self.bin), "FAKE_GH_VISIBILITY": visibility or "",
+               "FAKE_GH_LOG": str(self.gh_log), "GH_REPO": "someone/else"}
+        with mock.patch.dict(os.environ, env), stub_provider(prov):
+            return run(["send", prov.job.id, "--yes", *extra])
+
+    def gh_runs(self):
+        if not self.gh_log.exists():
+            return []
+        return [ln.split("|") for ln in self.gh_log.read_text().splitlines()]
+
+    def test_a_public_repository_is_refused_before_anything_is_confirmed(self):
+        prov = StubProvider()
+        code, _, err = self.send(prov, "PUBLIC")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.calls, [], "the provider was reached before the refusal")
+        self.assertFalse(self.record.exists())
+        self.assertIn("public repository", err)
+        self.assertIn("Nothing was posted", err)
+        self.assertIn("--log-dir", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_gh_is_asked_about_this_repository(self):
+        self.send(StubProvider(), "PUBLIC")
+        self.assertEqual(self.gh_runs(),
+                         [[str(self.repo), "repo view --json visibility", "unset"]])
+
+    def test_a_test_send_is_refused_too(self):
+        """A test send writes the same names and addresses to test.jsonl."""
+        prov = StubProvider(job=_job(testmode=True))
+        code, _, _ = self.send(prov, "PUBLIC")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.called("confirm"), [])
+        self.assertFalse(self.record.exists())
+
+    def test_a_public_repository_with_log_dir_goes_ahead(self):
+        prov = StubProvider()
+        code, _, err = self.send(prov, "PUBLIC", "--log-dir", str(self.private))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertEqual([e["id"] for e in ledger.read(self.private)], ["print_stub0001"])
+        self.assertFalse(self.record.exists())
+        self.assertEqual(self.gh_runs(), [], "--log-dir is not second-guessed")
+
+    def test_a_private_repository_is_recorded_as_before(self):
+        for visibility in ("PRIVATE", "INTERNAL"):
+            with self.subTest(visibility=visibility):
+                prov = StubProvider()
+                code, _, err = self.send(prov, visibility)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(prov.called("confirm")), 1)
+                self.assertEqual([e["id"] for e in ledger.read(self.record)],
+                                 ["print_stub0001"])
+                self.assertNotIn("warning", err)
+                (self.record / "sent.jsonl").unlink()
+
+    def test_without_gh_it_warns_and_goes_ahead(self):
+        prov = StubProvider()
+        code, _, err = self.send(prov, None)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertEqual([e["id"] for e in ledger.read(self.record)], ["print_stub0001"])
+        self.assertIn("could not check whether", err)
+        self.assertIn("gh is not installed", err)
+        self.assertIn("--log-dir", err)
+
+    def test_when_gh_cannot_say_it_warns_and_goes_ahead(self):
+        prov = StubProvider()
+        code, _, err = self.send(prov, "FAIL")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertIn("could not check whether", err)
+        self.assertIn("known GitHub host", err)
 
 
 class TestTestSends(unittest.TestCase):
