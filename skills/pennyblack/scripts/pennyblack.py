@@ -393,8 +393,13 @@ def build_parser():
     # --json is accepted either before or after the subcommand. People write
     # `pennyblack draft x.pdf --json` far more often than the other way round,
     # and argparse does not allow that unless every subparser declares it too.
+    #
+    # SUPPRESS matters. With a plain store_true, the subparser sets its own
+    # default of False and overwrites a --json given before the subcommand, so
+    # `pennyblack --json log` printed text. With SUPPRESS the subparser only
+    # sets it when --json is actually given after the subcommand.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--json", action="store_true",
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
                         help="machine-readable output")
 
     sub = p.add_subparsers(dest="command", required=True)
