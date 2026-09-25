@@ -3,17 +3,22 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  # THE ESTATE FLOOR, defined once in dbhq-uk/.github (dbhq-uk/.github#4):
+  # SKILL.md frontmatter parses as YAML and names its directory, plugin.json
+  # parses and carries no version, skill paths are braced, every shell script
+  # passes bash -n and shellcheck, ruff E9,F, and no em or en dashes. Pinned
+  # by SHA; Dependabot moves the pin.
+  floor:
+    uses: dbhq-uk/.github/.github/workflows/skill-floor.yml@af131df509f44eb9abfe8b37ad6299c11f496c5f
+    with:
+      # The Python is held to the dash rule too, as it was before the floor.
+      dash-files: "*.md *.py"
+
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      # No `version` in plugin.json, on purpose (24 Sep 2026). Claude Code only
-      # updates an installed plugin when this field changes, it was never bumped,
-      # and marketplace installs sat on old code for weeks. With no version the
-      # commit is the version, so every merge to main reaches users.
-      - name: plugin.json carries no version
-        run: jq -e 'has("version") | not' .claude-plugin/plugin.json > /dev/null
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           # 3.9 is the floor the skill claims, so it is the version CI proves.
@@ -24,23 +29,6 @@ jobs:
         # Standard library only, no network and no account - which is the whole
         # reason this can run on every push.
         run: cd skills/pennyblack && python3 -m unittest discover -s tests
-
-      - name: shell scripts parse
-        run: |
-          fail=0
-          while IFS= read -r s; do
-            bash -n "$s" || { echo "Syntax error: $s"; fail=1; }
-          done < <({ find . -maxdepth 1 -name '*.sh'; find skills -name '*.sh'; })
-          exit $fail
-
-      - name: plugin manifest is valid JSON
-        run: jq empty .claude-plugin/plugin.json
-
-      - name: no em dashes
-        run: |
-          if grep -rInP '[\x{2014}\x{2013}]' --include='*.md' --include='*.py' .; then
-            echo "em or en dash found"; exit 1
-          fi
 
       - name: draft and send stay separate commands
         # THE ONE CONSTRAINT THIS SKILL CANNOT LOSE. Physical post cannot be
@@ -53,81 +41,3 @@ jobs:
                --include='*.py' skills/pennyblack/scripts; then
             echo "a one-shot draft-and-send command has appeared"; exit 1
           fi
-
-  # THE SAME TWO LINTERS IN EVERY DBHQ SKILL REPO, added 17 Sep 2026. Nine of
-  # the fourteen ran no linter at all, in an estate that is mostly bash and
-  # Python - so a shell quoting hazard or a name that does not exist was only
-  # caught by somebody reading the diff.
-  #
-  # IT IS A DELIBERATELY NARROW RUFF SELECTION. `E9` is syntax errors and
-  # `F` is the pyflakes set: undefined names, unused imports, f-strings with no
-  # placeholders. Those are bugs. The full default selection flags import order
-  # and whitespace across every one of these repos, which would have meant
-  # reformatting thousands of lines in code other sessions are working in
-  # before the gate could go green - a large diff to buy a gate that catches
-  # less than this one does. garmin and imager run the full ruff and keep it.
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: shellcheck
-        # -S warning, not the default, because `info` and `style` fire on
-        # idioms these scripts use deliberately. xargs -r so a repo with no
-        # shell scripts is a pass rather than a shellcheck usage error.
-        run: |
-          find . -name '*.sh' -not -path '*/.venv/*' -print0 \
-            | xargs -0 -r shellcheck -S warning
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
-        with:
-          python-version: "3.11"
-
-      - name: ruff - syntax errors and undefined names
-        run: |
-          pip install --quiet ruff
-          ruff check . --select E9,F --exclude .venv
-
-      # A real YAML parse, not a search for `name:` and `description:`. An
-      # unquoted `: ` inside the description makes the frontmatter invalid YAML
-      # with both keys still present, so a key search would pass it, and a
-      # strict loader skips the skill. PyYAML is installed here, in CI only; the
-      # skill itself stays standard library.
-      - name: SKILL.md frontmatter parses as YAML and names its directory
-        run: |
-          pip install --quiet pyyaml
-          python3 - <<'PY'
-          import pathlib, re, sys, yaml
-          skills = sorted(pathlib.Path("skills").glob("*/SKILL.md"))
-          if not skills:
-              sys.exit("no skills/*/SKILL.md found")
-          ok = True
-          for skill in skills:
-              text = skill.read_text(encoding="utf-8")
-              match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
-              if not match:
-                  print(f"{skill}: no frontmatter")
-                  ok = False
-                  continue
-              try:
-                  meta = yaml.safe_load(match.group(1))
-              except yaml.YAMLError as err:
-                  print(f"{skill}: frontmatter is not valid YAML: {err}")
-                  ok = False
-                  continue
-              if not isinstance(meta, dict):
-                  print(f"{skill}: frontmatter is not a mapping")
-                  ok = False
-                  continue
-              directory = skill.parent.name
-              if meta.get("name") != directory:
-                  print(f"{skill}: name is {meta.get('name')!r}, directory is {directory!r}")
-                  ok = False
-              description = meta.get("description")
-              if not isinstance(description, str) or not description.strip():
-                  print(f"{skill}: description is missing or empty")
-                  ok = False
-          if ok:
-              print(f"{len(skills)} SKILL.md file(s) OK")
-          sys.exit(0 if ok else 1)
-          PY
