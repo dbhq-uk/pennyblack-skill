@@ -636,12 +636,14 @@ def cmd_log(args):
     print()
     print(f"  {log_dir}")
     print()
-    total = 0
-    for e in sent[-args.limit:]:
+    # The total covers every live letter in the record, not only the ones
+    # shown. Summing the displayed slice understated it once there were more
+    # letters than --limit, and nothing said the figure was partial.
+    total = sum(e.get("cost_pence") or 0 for e in sent if not e.get("testmode"))
+    shown = sent[-args.limit:]
+    for e in shown:
         mode = "  [test]" if e.get("testmode") else ""
         pence = e.get("cost_pence", 0)
-        if not e.get("testmode"):
-            total += pence
         date = _date(e.get("confirmed_at"))
         print(f"  {date}  {', '.join(e.get('recipients') or ['?'])}{mode}")
         print(f"    {e.get('service_label') or e.get('service','?')}  -  "
@@ -671,6 +673,8 @@ def cmd_log(args):
                 print(f"    cancelled {n} of {len(ev.get('letters', []))} letter(s)"
                       f" on {_date(ev.get('at'))}")
         print()
+    if len(shown) < len(sent):
+        print(f"  showing the last {len(shown)} of {len(sent)}. Use --limit to see more.")
     print(f"  {len(sent)} letter(s) recorded, £{total / 100:.2f} spent live")
     if checked is not None:
         print(f"  checked {checked} job(s) that can still change with the provider")
