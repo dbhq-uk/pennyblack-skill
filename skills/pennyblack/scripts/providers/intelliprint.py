@@ -27,7 +27,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .base import Cancellation, Cost, Draft, Mailing, Provider
+from .base import Address, Cancellation, Cost, Draft, Mailing, Provider
 
 API_BASE = "https://api.intelliprint.net/v1"
 
@@ -127,6 +127,11 @@ class Intelliprint(Provider):
         "special-9am": "uk_special_delivery_9am",
     }
 
+    #: Sheets each envelope holds, from
+    #: https://www.intelliprint.net/docs/envelope-and-postcard-sizes. A letter
+    #: that needs more is moved to a bigger envelope, and charged for it.
+    envelope_capacity = {"c5": 15, "c4": 50, "c4_plus": 250, "a4_box": 1800}
+
     def __init__(self, config: dict):
         super().__init__(config)
         self.api_key = config["api_key"]
@@ -221,6 +226,9 @@ class Intelliprint(Provider):
     def _to_draft(self, payload: dict, service: str) -> Draft:
         letters = payload.get("letters") or []
         preview = next((l.get("pdf") for l in letters if l.get("pdf")), None)
+        per_letter = [l.get("sheets") or 0 for l in letters]
+        if not any(per_letter) and letters:
+            per_letter = [-(-(payload.get("sheets") or 0) // len(letters))]
         return Draft(
             id=payload.get("id", ""),
             provider=self.name,
@@ -235,6 +243,12 @@ class Intelliprint(Provider):
             ],
             preview_url=preview,
             raw=payload,
+            addresses=[
+                Address(name=a.get("name") or "", line=a.get("line") or "",
+                        postcode=a.get("postcode") or "", country=a.get("country") or "GB")
+                for a in (l.get("address") or {} for l in letters) if a
+            ],
+            sheets_per_letter=max(per_letter, default=0),
         )
 
     def _reverse_service(self, api_value: str) -> str:
@@ -253,20 +267,17 @@ class Intelliprint(Provider):
                 f"Intelliprint does not offer '{service}'. Available: "
                 + ", ".join(sorted(self.service_map))
             )
-        if not recipients:
+        from_pdf = bool(options.get("address_from_pdf"))
+        if from_pdf and recipients:
+            raise IntelliprintError(
+                "Give recipients or read the address from the PDF, not both.")
+        if not recipients and not from_pdf:
             raise IntelliprintError("No recipients given.")
 
         fields = {
             "type": "letter",
             "testmode": testmode,
             "confirmed": False,
-            "recipients": [
-                {"address": {
-                    "name": r.name, "line": r.line,
-                    "postcode": r.postcode, "country": r.country,
-                }}
-                for r in recipients
-            ],
             "postage": {
                 "service": self.service_map[service],
                 "ideal_envelope": options.get("envelope", "c5"),
@@ -276,6 +287,17 @@ class Intelliprint(Provider):
                 "black_and_white": bool(options.get("black_and_white", False)),
             },
         }
+        # With no recipients, Intelliprint reads the address from where the
+        # envelope window falls on page 1 of the file. See
+        # https://www.intelliprint.net/docs/choose-a-content-strategy
+        if recipients:
+            fields["recipients"] = [
+                {"address": {
+                    "name": r.name, "line": r.line,
+                    "postcode": r.postcode, "country": r.country,
+                }}
+                for r in recipients
+            ]
         if reference:
             fields["reference"] = reference
         if options.get("confidential"):

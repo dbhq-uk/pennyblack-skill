@@ -10,12 +10,14 @@ Post a PDF. It is printed in Leeds and Royal Mail delivers it.
 Named after the Penny Black, the 1840 stamp that made it possible to pay once
 and have a letter carried anywhere.
 
-**It posts the PDF exactly as it is.** No typesetting, no conversion, no
-letterhead applied unless the account has one configured. What the user sees in
-their PDF is what comes out of the envelope. If they hand you a `.md`, `.docx`
-or anything else, tell them to export it to PDF first rather than converting it
-yourself - a letter that gets silently reflowed is a letter that might not say
-what they think it says.
+**It does not convert or typeset anything.** It posts the user's PDF, with no
+letterhead unless they ask for one. The provider does add two things to page 1:
+the recipient's address, printed where the envelope window falls, and a small
+code string down the left margin. So **what you see in the preview is what
+comes out of the envelope**, and the preview is what you check. If they hand you
+a `.md`, `.docx` or anything else, tell them to export it to PDF first rather
+than converting it yourself - a letter that gets silently reflowed is a letter
+that might not say what they think it says.
 
 ## The rule that matters
 
@@ -27,11 +29,11 @@ The tool is two steps so this is easy to honour:
 
 | | |
 |---|---|
-| `draft` | uploads it, prices it, returns a preview. **Free. Nothing is printed.** |
+| `draft` | checks it, uploads it, prices it, saves a preview. **Free. Nothing is printed.** |
 | `send`  | commits one draft by id. **This posts it and charges the account.** |
 
-There is no one-shot command, deliberately. Draft it, show the user the cost and
-the preview link, wait, then send.
+There is no one-shot command, deliberately. Draft it, check page 1 of the
+preview, show the user the cost and the preview, wait, then send.
 
 ## Setup
 
@@ -61,14 +63,41 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" draft invoice.pdf \
   --live
 ```
 
-Returns the job id, the page count, the real cost inc VAT, and a **signed URL to
-a PDF preview of the letter as it will be printed** (valid about an hour).
+Returns the job id, the address as the provider will print it, the page count,
+the real cost inc VAT, and **a PDF preview of the letter as it will be printed,
+saved to a local file**. It prints the file's path (`preview_file` in `--json`)
+and the provider's signed link to it, which expires in about an hour.
 
-**2. Show the user.** Give them the cost and the preview link. If they are on
-another device, serve the preview over Tailscale rather than relying on an
-inline render. Then wait.
+`draft` checks the letter first. It **refuses**, and uploads nothing, when the
+file is not a PDF or is encrypted, when the address is one line with commas in
+it, or when a UK postcode is not in the right format. It **warns**, and still
+drafts, when a page is not A4 or a letter has more sheets than its envelope
+holds. Pass every warning on to the user.
 
-**3. Send it, only once they have said so.**
+**2. Check the address window on page 1.** Open page 1 of the saved preview and
+look at the address before anything else. Do this every time. The address is
+the one thing nobody can check once the envelope is sealed. It must:
+
+- show the whole address - the name, every line and the postcode - with nothing
+  wrapped, cut off or run together
+- sit clear of the letter itself, with nothing from the PDF printed under or
+  over it
+- leave the left margin clear, where the code string is printed
+
+If any of that is wrong, **do not ask for "send it"**. Cancel the draft, fix the
+cause, and draft again.
+
+**3. Show the user.** Give them the cost, the preview and any warnings. Then
+wait.
+
+**If the PDF already has the address on page 1** in the window position, as an
+invoice from accounting software often does, draft with `--address-from-pdf`
+and no `--name`, `--line` or `--postcode`. The provider reads the address from
+the file, and `draft` shows what it read. Check that against what the user
+expects. Never give an address as well as a PDF that has one: what happens when
+both are there is not documented.
+
+**4. Send it, only once they have said so.**
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" send print_YheDXex1cHsyD9xosrgZu
@@ -208,6 +237,8 @@ public one. The README written into the folder says so and gives the
   line in the envelope window; a single comma-joined string prints as one long line and
   wraps mid-address. Never put the postcode in it - that is `--postcode`.
 - `--to-file recipients.json` - `{"name":..., "line": "..." or ["...", "..."], "postcode":...}` or a list.
+- `--address-from-pdf` - no recipient; the provider reads the address from page 1 of
+  the PDF. Use it only when the PDF already has the address in the window position.
 - `--background-first` / `--background-other` - letterhead ids, if the account
   has backgrounds uploaded. Applied at print time, behind the PDF.
 - `--json` - machine-readable output, before or after the subcommand.

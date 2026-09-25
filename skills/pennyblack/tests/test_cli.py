@@ -21,10 +21,13 @@ import ledger  # noqa: E402
 import pennyblack  # noqa: E402
 import providers  # noqa: E402
 from providers.base import (  # noqa: E402
-    Cancellation, Cost, Draft, Mailing, Provider, SERVICES,
+    Address, Cancellation, Cost, Draft, Mailing, Provider, SERVICES,
 )
 
 PDF = b"%PDF-1.7 stub letter"
+A4_PDF = (b"%PDF-1.7\n1 0 obj << /Type /Page /MediaBox [0 0 595.28 841.89] >> endobj\n"
+          b"trailer << /Root 1 0 R >>\n%%EOF\n")
+ACME = Address(name="Acme Ltd", line="1 High Street\nLeeds", postcode="LS1 1AA")
 
 
 def _job(**over):
@@ -50,6 +53,7 @@ class StubProvider(Provider):
 
     name = "stub"
     service_map = {s: s for s in SERVICES}
+    envelope_capacity = {"c5": 15, "c4": 50}
 
     def __init__(self, config=None, *, mailings=None, job=None, document=PDF,
                  cancellation=None):
@@ -59,6 +63,18 @@ class StubProvider(Provider):
         self.document = document
         self.cancellation = cancellation
         self.calls = []
+
+    def draft(self, **kwargs):
+        """Hand back the job as a draft. The kwargs are kept for the test."""
+        self.calls.append(("draft", kwargs))
+        recipients = kwargs["recipients"]
+        over = dict(testmode=kwargs["testmode"], service=kwargs["service"],
+                    confirmed=False)
+        if recipients:
+            over.update(recipients=[r.name for r in recipients],
+                        addresses=list(recipients))
+        self.job = dataclasses.replace(self.job, **over)
+        return dataclasses.replace(self.job)
 
     def cancel(self, draft_id):
         self.calls.append(("cancel", draft_id))
@@ -111,6 +127,11 @@ def _subcommands():
                        if not a.option_strings and a.dest != "help"]
         out[name] = ["x.pdf" if a.dest == "source" else "print_x" for a in positionals]
     return out
+
+
+def flat(text):
+    """Output with its line wrapping taken out."""
+    return " ".join(text.split())
 
 
 def run(argv):
@@ -388,6 +409,171 @@ class TestSend(unittest.TestCase):
         self.assertIs(got["captured"], False)
         self.assertIsNone(got["document"])
         self.assertEqual(got["ledger"], str(self.log_dir / "sent.jsonl"))
+
+
+class _DraftCase(unittest.TestCase):
+    """A temporary folder with a PDF in it, and previews saved inside it."""
+
+    ADDRESS = ["--name", "Acme Ltd", "--line", "1 High Street", "--line", "Leeds",
+               "--postcode", "LS1 1AA"]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.pdf = self.tmp / "letter.pdf"
+        self.pdf.write_bytes(A4_PDF)
+        patcher = mock.patch.object(pennyblack.tempfile, "tempdir", str(self.tmp))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def draft(self, prov=None, *extra, address=None, source=None):
+        prov = prov or StubProvider()
+        with stub_provider(prov):
+            code, out, err = run(["draft", str(source or self.pdf), "--service", "first",
+                                  *(self.ADDRESS if address is None else address), *extra])
+        return prov, code, out, err
+
+
+class TestDraftPreview(_DraftCase):
+    """The agent has to open page 1 of the preview. A link that expires in an
+    hour is not enough, so draft saves the file and says where."""
+
+    def test_saves_the_preview_and_prints_its_path(self):
+        _, code, out, err = self.draft()
+        self.assertEqual(code, 0, err)
+        line = next(ln for ln in out.splitlines() if ln.strip().startswith("preview"))
+        path = Path(line.split(None, 1)[1])
+        self.assertTrue(path.is_absolute())
+        self.assertEqual(path.read_bytes(), PDF)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_json_returns_the_preview_path(self):
+        _, code, out, _ = self.draft(None, "--json")
+        got = json.loads(out)
+        self.assertEqual(Path(got["preview_file"]).read_bytes(), PDF)
+        self.assertEqual(got["warnings"], [])
+        self.assertEqual(got["addresses"], [["Acme Ltd", "1 High Street", "Leeds", "LS1 1AA"]])
+
+    def test_a_preview_that_could_not_be_fetched_says_so(self):
+        _, code, out, _ = self.draft(StubProvider(document=None))
+        self.assertEqual(code, 0)
+        self.assertIn("NOT saved", out)
+        self.assertIn("https://example.invalid/p.pdf", out)
+
+    def test_output_asks_for_the_address_window_to_be_checked(self):
+        _, _, out, _ = self.draft()
+        self.assertIn("page 1", out)
+        self.assertIn("address", out)
+
+    def test_output_shows_the_address_line_by_line(self):
+        _, _, out, _ = self.draft()
+        for line in ("Acme Ltd", "1 High Street", "Leeds", "LS1 1AA"):
+            self.assertRegex(out, rf"(?m)^\s+(to\s+)?{line}$")
+
+
+class TestDraftChecks(_DraftCase):
+    """A refused draft uploads nothing. A warning still drafts, and says why."""
+
+    def assertRefused(self, prov, code, err, text):
+        self.assertNotEqual(code, 0)
+        self.assertIn(text, err)
+        self.assertIn("Nothing was uploaded", err)
+        self.assertEqual(prov.called("draft"), [], "a refused draft reached the provider")
+
+    def test_non_pdf_bytes_are_refused(self):
+        self.pdf.write_bytes(b"<html>404</html>")
+        prov, code, _, err = self.draft()
+        self.assertRefused(prov, code, err, "not a PDF")
+
+    def test_an_encrypted_pdf_is_refused(self):
+        self.pdf.write_bytes(A4_PDF + b"trailer << /Encrypt 5 0 R >>\n")
+        prov, code, _, err = self.draft()
+        self.assertRefused(prov, code, err, "encrypted")
+
+    def test_a_comma_joined_line_is_refused(self):
+        prov, code, _, err = self.draft(None, address=[
+            "--name", "HMCTS", "--line", "PO Box 123, Riverside House, Leeds",
+            "--postcode", "LS1 1AA"])
+        self.assertRefused(prov, code, err, "commas")
+
+    def test_a_comma_joined_line_in_to_file_is_refused(self):
+        to = self.tmp / "to.json"
+        to.write_text(json.dumps({"name": "HMCTS", "line": "PO Box 123, Leeds",
+                                  "postcode": "LS1 1AA"}))
+        prov, code, _, err = self.draft(None, address=["--to-file", str(to)])
+        self.assertRefused(prov, code, err, "commas")
+
+    def test_a_malformed_postcode_is_refused(self):
+        prov, code, _, err = self.draft(None, address=[
+            "--name", "Acme Ltd", "--line", "1 High Street", "--line", "Leeds",
+            "--postcode", "LS1 1A"])
+        self.assertRefused(prov, code, err, "not a UK postcode")
+
+    def test_a_good_letter_drafts_with_no_warnings(self):
+        prov, code, out, err = self.draft()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("draft")), 1)
+        self.assertNotIn("WARNING", out)
+
+    def test_a_non_a4_page_warns_but_drafts(self):
+        self.pdf.write_bytes(A4_PDF.replace(b"595.28 841.89", b"612 792"))
+        prov, code, out, _ = self.draft()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(prov.called("draft")), 1)
+        self.assertRegex(flat(out), r"WARNING .*not A4")
+
+    def test_too_many_sheets_for_c5_warns(self):
+        prov = StubProvider(job=_job(sheets=16, sheets_per_letter=16))
+        _, code, out, _ = self.draft(prov)
+        self.assertEqual(code, 0)
+        self.assertRegex(flat(out), r"WARNING .*16 sheets")
+
+    def test_fifteen_sheets_do_not_warn(self):
+        prov = StubProvider(job=_job(sheets=15, sheets_per_letter=15))
+        _, _, out, _ = self.draft(prov)
+        self.assertNotIn("WARNING", out)
+
+
+class TestAddressFromPdf(_DraftCase):
+    """With --address-from-pdf no recipient is sent, and the provider reads
+    the address from page 1. The draft has to show what it read."""
+
+    def read(self, *addresses):
+        return StubProvider(job=_job(recipients=[a.name for a in addresses],
+                                     addresses=list(addresses)))
+
+    def test_sends_no_recipients(self):
+        prov, code, _, err = self.draft(self.read(ACME), "--address-from-pdf", address=[])
+        self.assertEqual(code, 0, err)
+        kwargs = prov.called("draft")[0][1]
+        self.assertEqual(kwargs["recipients"], [])
+        self.assertIs(kwargs["address_from_pdf"], True)
+
+    def test_shows_the_address_it_read(self):
+        _, _, out, _ = self.draft(self.read(ACME), "--address-from-pdf", address=[])
+        self.assertIn("read from", out)
+        for line in ("Acme Ltd", "1 High Street", "Leeds", "LS1 1AA"):
+            self.assertIn(line, out)
+
+    def test_no_address_read_says_do_not_send(self):
+        prov = StubProvider(job=_job(recipients=[], addresses=[]))
+        _, code, out, _ = self.draft(prov, "--address-from-pdf", address=[])
+        self.assertEqual(code, 0)
+        self.assertRegex(flat(out), r"WARNING .*Do not send")
+
+    def test_a_malformed_postcode_read_from_the_pdf_warns(self):
+        odd = Address(name="Acme Ltd", line="1 High Street", postcode="LS1 1A")
+        _, _, out, _ = self.draft(self.read(odd), "--address-from-pdf", address=[])
+        self.assertRegex(flat(out), r"WARNING .*not a UK postcode")
+
+    def test_cannot_be_combined_with_a_recipient(self):
+        prov, code, _, err = self.draft(None, "--address-from-pdf")
+        self.assertNotEqual(code, 0)
+        self.assertIn("one or the other", err)
+        self.assertEqual(prov.called("draft"), [])
 
 
 class TestCancel(unittest.TestCase):
