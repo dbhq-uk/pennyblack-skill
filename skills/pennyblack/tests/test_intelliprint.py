@@ -4,20 +4,35 @@ No network. Every test either checks pure logic or drives _request through a
 stub, because a test suite that posts real letters is an expensive test suite.
 """
 
+import io
+import json
 import sys
+import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from providers.base import Address, SERVICES, EVIDENCE_SERVICES  # noqa: E402
 from providers.intelliprint import (  # noqa: E402
     COST_DIVISOR,
+    ERROR_CODES,
     Intelliprint,
     IntelliprintError,
     _flatten,
     _money,
 )
+
+#: A PDF on disk. The provider takes a path to a PDF and nothing else.
+_TMP = tempfile.TemporaryDirectory()
+LETTER = Path(_TMP.name) / "letter.pdf"
+LETTER.write_bytes(b"%PDF-1.7 stub letter")
+
+
+def tearDownModule():
+    _TMP.cleanup()
 
 
 class TestMoney(unittest.TestCase):
@@ -143,15 +158,15 @@ class TestDraft(unittest.TestCase):
 
     def test_draft_is_never_confirmed(self):
         """A draft that arrives confirmed would post a letter nobody approved."""
-        self.prov.draft(source="<p>hi</p>", recipients=self.addr, service="signed")
+        self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
         self.assertIs(self.prov.calls[0]["fields"]["confirmed"], False)
 
     def test_draft_defaults_to_test_mode(self):
-        self.prov.draft(source="<p>hi</p>", recipients=self.addr, service="signed")
+        self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
         self.assertIs(self.prov.calls[0]["fields"]["testmode"], True)
 
     def test_service_is_mapped_to_the_vendor_name(self):
-        self.prov.draft(source="<p>hi</p>", recipients=self.addr, service="signed")
+        self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(
             self.prov.calls[0]["fields"]["postage"]["service"],
             "uk_first_class_signed_for",
@@ -161,21 +176,41 @@ class TestDraft(unittest.TestCase):
         """Silently posting 2nd class when Special Delivery was asked for
         would be the worst possible failure mode."""
         with self.assertRaises(IntelliprintError) as ctx:
-            self.prov.draft(source="x", recipients=self.addr, service="carrier-pigeon")
+            self.prov.draft(source=LETTER, recipients=self.addr, service="carrier-pigeon")
         self.assertIn("does not offer", str(ctx.exception))
 
     def test_no_recipients_is_refused(self):
         with self.assertRaises(IntelliprintError):
-            self.prov.draft(source="x", recipients=[], service="second")
+            self.prov.draft(source=LETTER, recipients=[], service="second")
 
     def test_preview_url_is_surfaced(self):
-        draft = self.prov.draft(source="x", recipients=self.addr, service="signed")
+        draft = self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(draft.preview_url, "https://example.invalid/preview.pdf")
 
     def test_cost_is_converted(self):
-        draft = self.prov.draft(source="x", recipients=self.addr, service="signed")
+        draft = self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(draft.cost.amount_pence, 434)
         self.assertEqual(draft.cost.total_pence, 521)
+
+    def test_the_pdf_is_uploaded_as_a_file(self):
+        self.prov.draft(source=LETTER, recipients=self.addr, service="signed")
+        self.assertEqual(self.prov.calls[0]["file_path"], LETTER)
+        self.assertNotIn("content", self.prov.calls[0]["fields"])
+
+    def test_a_path_given_as_text_is_uploaded_too(self):
+        self.prov.draft(source=str(LETTER), recipients=self.addr, service="signed")
+        self.assertEqual(self.prov.calls[0]["file_path"], LETTER)
+
+    def test_html_or_text_is_refused_not_sent_as_content(self):
+        """There was a path that sent a string as `content` for the provider to
+        typeset. pennyblack posts PDFs and converts nothing, so it is gone."""
+        for source in ("<p>hi</p>", "Dear Sir", str(LETTER.with_suffix(".html"))):
+            with self.subTest(source=source):
+                prov = StubbedIntelliprint({"api_key": "k"}, _payload())
+                with self.assertRaises(IntelliprintError) as ctx:
+                    prov.draft(source=source, recipients=self.addr, service="signed")
+                self.assertIn("PDF", str(ctx.exception))
+                self.assertEqual(prov.calls, [])
 
     def test_missing_pdf_file_is_caught_before_the_api_call(self):
         with self.assertRaises(IntelliprintError):
@@ -187,7 +222,7 @@ class TestDraft(unittest.TestCase):
         payload["letters"][0]["address"] = {"name": "Acme Ltd", "line": "1 High St\nLeeds",
                                             "postcode": "LS1 1AA", "country": "GB"}
         draft = StubbedIntelliprint({"api_key": "k"}, payload).draft(
-            source="x", recipients=self.addr, service="signed")
+            source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(len(draft.addresses), 1)
         self.assertEqual(draft.addresses[0].line, "1 High St\nLeeds")
         self.assertEqual(draft.addresses[0].postcode, "LS1 1AA")
@@ -197,12 +232,12 @@ class TestDraft(unittest.TestCase):
         payload["letters"] = [dict(payload["letters"][0], sheets=4),
                               dict(payload["letters"][0], sheets=16)]
         draft = StubbedIntelliprint({"api_key": "k"}, payload).draft(
-            source="x", recipients=self.addr, service="signed")
+            source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(draft.sheets_per_letter, 16)
 
     def test_sheets_per_letter_falls_back_to_the_job_total(self):
         draft = StubbedIntelliprint({"api_key": "k"}, _payload(sheets=16)).draft(
-            source="x", recipients=self.addr, service="signed")
+            source=LETTER, recipients=self.addr, service="signed")
         self.assertEqual(draft.sheets_per_letter, 16)
 
     def test_a_tracked_service_is_never_asked_for_c5(self):
@@ -210,17 +245,17 @@ class TestDraft(unittest.TestCase):
         for service in ("tracked-24", "tracked-48"):
             with self.subTest(service=service):
                 prov = StubbedIntelliprint({"api_key": "k"}, _payload())
-                prov.draft(source="x", recipients=self.addr, service=service)
+                prov.draft(source=LETTER, recipients=self.addr, service=service)
                 self.assertEqual(prov.calls[0]["fields"]["postage"]["ideal_envelope"], "c4")
 
     def test_a_tracked_service_in_c5_is_refused_before_the_api_call(self):
         prov = StubbedIntelliprint({"api_key": "k"}, _payload())
         with self.assertRaises(ValueError):
-            prov.draft(source="x", recipients=self.addr, service="tracked-24", envelope="c5")
+            prov.draft(source=LETTER, recipients=self.addr, service="tracked-24", envelope="c5")
         self.assertEqual(prov.calls, [])
 
     def test_other_services_default_to_c5(self):
-        self.prov.draft(source="x", recipients=self.addr, service="first")
+        self.prov.draft(source=LETTER, recipients=self.addr, service="first")
         self.assertEqual(self.prov.calls[0]["fields"]["postage"]["ideal_envelope"], "c5")
 
     def test_c5_holds_fifteen_sheets(self):
@@ -236,17 +271,17 @@ class TestAddressFromPdf(unittest.TestCase):
         self.prov = StubbedIntelliprint({"api_key": "k"}, _payload())
 
     def test_sends_no_recipients(self):
-        self.prov.draft(source="x", recipients=[], service="signed", address_from_pdf=True)
+        self.prov.draft(source=LETTER, recipients=[], service="signed", address_from_pdf=True)
         self.assertNotIn("recipients", self.prov.calls[0]["fields"])
 
     def test_no_recipients_without_the_option_is_still_refused(self):
         with self.assertRaises(IntelliprintError):
-            self.prov.draft(source="x", recipients=[], service="signed")
+            self.prov.draft(source=LETTER, recipients=[], service="signed")
         self.assertEqual(self.prov.calls, [])
 
     def test_recipients_and_the_option_together_are_refused(self):
         with self.assertRaises(IntelliprintError):
-            self.prov.draft(source="x", service="signed", address_from_pdf=True,
+            self.prov.draft(source=LETTER, service="signed", address_from_pdf=True,
                             recipients=[Address(name="A", line="B", postcode="C")])
         self.assertEqual(self.prov.calls, [])
 
@@ -356,6 +391,82 @@ class TestCancel(unittest.TestCase):
             prov.cancel("prt_test123")
         self.assertIn("waiting to print", str(ctx.exception))
         self.assertNotIn("postcode", str(ctx.exception))
+
+
+def _error(**fields):
+    return json.dumps({"error": fields})
+
+
+class TestErrors(unittest.TestCase):
+    """Intelliprint documents one error object, with a type, a code and the
+    parameter at fault. Every 400 used to say "Check the address and
+    postcode", including a stray field and a failed cancel."""
+
+    def test_the_documented_example_names_the_parameter(self):
+        text = Intelliprint._explain(400, _error(
+            message="Received unknown parameter: confimred (Did you mean confirmed?)",
+            type="invalid_request_error", code="parameter_unknown", param="confimred"))
+        self.assertIn("'confimred'", text.splitlines()[0])
+        self.assertIn("bug in pennyblack", text)
+        self.assertIn("Did you mean confirmed?", text)
+        self.assertNotIn("postcode", text)
+
+    def test_an_address_parameter_points_at_the_address(self):
+        text = Intelliprint._explain(400, _error(
+            message="Invalid postcode", type="invalid_request_error",
+            code="parameter_invalid", param="recipients[0][address][postcode]"))
+        self.assertIn("recipients[0][address][postcode]", text)
+        self.assertIn("Check the address and postcode", text)
+
+    def test_a_400_that_is_not_about_the_address_does_not_blame_it(self):
+        for code in ("parameter_invalid", "parameter_missing", "body_incorrect_format"):
+            with self.subTest(code=code):
+                text = Intelliprint._explain(400, _error(
+                    message="x", type="invalid_request_error", code=code, param="testmode"))
+                self.assertNotIn("postcode", text)
+
+    def test_every_documented_code_has_its_own_advice(self):
+        documented = {
+            "parameter_invalid", "parameter_missing", "parameter_unknown",
+            "body_too_large", "body_incorrect_format", "no_api_key", "invalid_api_key",
+            "logged_out", "forbidden", "payment_error", "not_found", "rate_limited",
+            "refused", "internal_error",
+        }
+        self.assertEqual(set(ERROR_CODES), documented)
+
+    def test_the_code_decides_the_advice_not_the_http_status(self):
+        text = Intelliprint._explain(400, _error(
+            message="Insufficient balance", type="payment_error", code="payment_error"))
+        self.assertIn("balance", text.splitlines()[0])
+        text = Intelliprint._explain(401, _error(
+            message="Invalid API key", type="authentication_error", code="invalid_api_key"))
+        self.assertIn("api_keys", text)
+
+    def test_an_unknown_code_falls_back_to_the_type(self):
+        text = Intelliprint._explain(400, _error(
+            message="x", type="rate_limited", code="something_new"))
+        self.assertIn("Wait and try again", text)
+        self.assertIn("code something_new", text)
+
+    def test_a_body_that_is_not_json_falls_back_to_the_status(self):
+        text = Intelliprint._explain(502, "<html>Bad gateway</html>")
+        self.assertIn("HTTP 502", text)
+        self.assertIn("Bad gateway", text)
+        self.assertEqual(Intelliprint._explain(429, ""), ERROR_CODES["rate_limited"])
+
+    def test_an_error_response_reaches_the_user_explained(self):
+        """Through _request, with urlopen replaced, so no network."""
+        body = _error(message="Invalid postcode", type="invalid_request_error",
+                      code="parameter_invalid", param="recipients[0][address][postcode]")
+        failure = urllib.error.HTTPError("https://api.invalid/v1/prints", 400, "Bad Request",
+                                         {}, io.BytesIO(body.encode()))
+        prov = Intelliprint({"api_key": "k"})
+        with mock.patch("urllib.request.urlopen", side_effect=failure):
+            with self.assertRaises(IntelliprintError) as ctx:
+                prov.retrieve("prt_test123")
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("recipients[0][address][postcode]", str(ctx.exception))
+        self.assertIn("Invalid postcode", str(ctx.exception))
 
 
 class TestServiceVocabulary(unittest.TestCase):

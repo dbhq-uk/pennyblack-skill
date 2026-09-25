@@ -35,6 +35,65 @@ API_BASE = "https://api.intelliprint.net/v1"
 COST_DIVISOR = 100_000_000
 
 
+#: What to do about each error code Intelliprint documents, from
+#: https://www.intelliprint.net/docs/errors. `{param}` is the parameter the
+#: error names. The code is the most specific thing the API says, so it wins.
+ERROR_CODES = {
+    "parameter_invalid": "Intelliprint rejected the value of {param}.",
+    "parameter_missing": "Intelliprint says {param} is missing.",
+    "parameter_unknown": "Intelliprint does not know the parameter {param}. "
+                         "That is a bug in pennyblack, not in your letter.",
+    "body_too_large": "The file is too large for Intelliprint to accept (the limit is 100 MiB).",
+    "body_incorrect_format": "Intelliprint could not read the request. "
+                             "That is a bug in pennyblack, not in your letter.",
+    "no_api_key": "No API key reached Intelliprint. Run setup again.",
+    "invalid_api_key": "Intelliprint rejected the API key, or it has expired. Check it at "
+                       "https://account.intelliprint.net/api_keys and run setup again.",
+    "logged_out": "Intelliprint says the API key is signed out. Check it at "
+                  "https://account.intelliprint.net/api_keys and run setup again.",
+    "forbidden": "The API key is valid but not allowed to do this.",
+    "payment_error": "Intelliprint says the account cannot pay for this: the balance is "
+                     "too low or the credit limit is reached. Check billing.",
+    "not_found": "Intelliprint has no such print job. Check the id.",
+    "rate_limited": "Rate limited by Intelliprint. Wait and try again.",
+    "refused": "Intelliprint refused the request: the account has reached its limit "
+               "for this.",
+    "internal_error": "Intelliprint had an internal error. Nothing is wrong at this end. "
+                      "Try again later.",
+}
+
+#: The general category, for a code this file does not know yet.
+ERROR_TYPES = {
+    "invalid_request_error": "Intelliprint rejected a parameter in the request.",
+    "authentication_error": ERROR_CODES["invalid_api_key"],
+    "payment_error": ERROR_CODES["payment_error"],
+    "rate_limited": ERROR_CODES["rate_limited"],
+    "internal_error": ERROR_CODES["internal_error"],
+}
+
+#: The last resort, when the body is not the documented error object.
+HTTP_HINTS = {
+    400: "Intelliprint rejected the request.",
+    401: ERROR_CODES["invalid_api_key"],
+    402: ERROR_CODES["payment_error"],
+    403: ERROR_CODES["forbidden"],
+    404: "No such print job.",
+    413: "The file is too large for Intelliprint to accept.",
+    422: "Intelliprint could not process the letter. Often a bad address or an "
+         "unreadable PDF.",
+    429: ERROR_CODES["rate_limited"],
+}
+
+
+def _param_hint(param):
+    """What a user can check, for a parameter that is theirs to fix."""
+    if "address" in param or "recipients" in param:
+        return " Check the address and postcode."
+    if param in ("file", "content"):
+        return " Check the PDF."
+    return ""
+
+
 class IntelliprintError(Exception):
     def __init__(self, message, status=None, body=None):
         super().__init__(message)
@@ -45,8 +104,10 @@ class IntelliprintError(Exception):
 def _money(obj: dict) -> Cost:
     """Turn Intelliprint's scaled integers into whole pence.
 
-    amount / 10^8 gives pounds; multiplying by 100 gives pence. Done in one
-    step to avoid a float round-trip: (amount * 100) // 10^8.
+    amount / 10^8 gives pounds, so amount * 100 / 10^8 gives pence. That is
+    rounded to the nearest penny, never truncated: truncating would turn a
+    value a hair under 101 pence into 100. `test_rounds_rather_than_truncates`
+    holds this.
     """
     if not obj:
         return Cost(0, 0, 0, "GBP")
@@ -202,31 +263,47 @@ class Intelliprint(Provider):
         raise IntelliprintError("Authentication failed with both header styles", status=401) from last
 
     @staticmethod
-    def _explain(code, detail):
-        """Turn an HTTP code into something a person can act on."""
-        hints = {
-            400: "Intelliprint rejected the request. Check the address and postcode.",
-            401: "Intelliprint rejected the API key. Check it at "
-                 "https://account.intelliprint.net/api_keys and run setup again.",
-            402: "Intelliprint says the account cannot be charged. Check billing.",
-            403: "The API key is valid but not permitted to do this.",
-            404: "No such print job.",
-            413: "The file is too large for Intelliprint to accept.",
-            422: "Intelliprint could not process the letter. Often a bad address "
-                 "or an unreadable PDF.",
-            429: "Rate limited by Intelliprint. Wait and try again.",
-        }
-        head = hints.get(code, f"Intelliprint returned HTTP {code}.")
+    def _explain(status, detail):
+        """Turn an error response into something a person can act on.
+
+        Intelliprint documents one error object: `error.message`, `error.type`,
+        `error.code` and, when one parameter is at fault, `error.param`. The
+        advice comes from the code, then the type, then the HTTP status, and
+        the parameter is named, so a 400 about a stray field no longer tells
+        the user to check their postcode.
+        """
         try:
-            parsed = json.loads(detail)
-            msg = parsed.get("message") or parsed.get("error") or ""
-            if isinstance(msg, dict):
-                msg = json.dumps(msg)
-            if msg:
-                return f"{head}\n  Intelliprint said: {msg}"
-        except (json.JSONDecodeError, AttributeError):
-            pass
-        return f"{head}\n  {detail[:400]}" if detail else head
+            parsed = json.loads(detail) if detail else None
+        except ValueError:
+            parsed = None
+        error = parsed.get("error") if isinstance(parsed, dict) else None
+        if not isinstance(error, dict):
+            head = HTTP_HINTS.get(status, f"Intelliprint returned HTTP {status}.")
+            message = error if isinstance(error, str) else (
+                parsed.get("message") if isinstance(parsed, dict) else None)
+            if message:
+                return f"{head}\n  Intelliprint said: {message}"
+            return f"{head}\n  {detail[:400]}" if detail else head
+
+        code, kind = error.get("code") or "", error.get("type") or ""
+        param = error.get("param") or ""
+        named = f"'{param}'" if param else "a parameter"
+        if code in ERROR_CODES:
+            head = ERROR_CODES[code].format(param=named)
+        elif kind in ERROR_TYPES:
+            head = ERROR_TYPES[kind]
+        else:
+            head = HTTP_HINTS.get(status, f"Intelliprint returned HTTP {status}.")
+        if param and (kind == "invalid_request_error" or code.startswith("parameter_")):
+            head += _param_hint(param)
+        lines = [head]
+        if error.get("message"):
+            lines.append(f"  Intelliprint said: {error['message']}")
+        tags = ", ".join(f"{k} {v}" for k, v in
+                         (("type", kind), ("code", code), ("param", param)) if v)
+        if tags:
+            lines.append(f"  ({tags})")
+        return "\n".join(lines)
 
     # -- mapping -----------------------------------------------------------
 
@@ -314,13 +391,16 @@ class Intelliprint(Provider):
         if options.get("background_other"):
             fields.setdefault("background", {})["other_pages"] = options["background_other"]
 
-        file_path = None
-        if isinstance(source, Path) or (isinstance(source, str) and source.startswith("@")):
-            file_path = Path(str(source).lstrip("@"))
-            if not file_path.exists():
-                raise IntelliprintError(f"No such file: {file_path}")
-        else:
-            fields["content"] = source
+        # A path to a PDF, and nothing else. There is no text or HTML path:
+        # pennyblack posts the document the user already has and converts
+        # nothing, because a tool that typesets a letter can change what it
+        # says on the page.
+        file_path = Path(source)
+        if file_path.suffix.lower() != ".pdf":
+            raise IntelliprintError(
+                f"pennyblack posts PDF files, and {str(source)[:60]!r} is not a path to one.")
+        if not file_path.is_file():
+            raise IntelliprintError(f"No such file: {file_path}")
 
         payload = self._request("POST", "/prints", fields=fields, file_path=file_path)
         return self._to_draft(payload, service)

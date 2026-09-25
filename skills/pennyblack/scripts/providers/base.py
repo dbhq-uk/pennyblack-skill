@@ -261,6 +261,9 @@ class Provider:
               testmode=True, **options) -> Draft:
         """Create an unconfirmed job. Nothing is printed or charged.
 
+        `source` is the path to a PDF, and the provider uploads that file as it
+        is. There is no text or HTML input: pennyblack converts nothing.
+
         `recipients` may be empty only when `options["address_from_pdf"]` is
         true, and then the provider reads the address from page 1 of the file.
         """
