@@ -17,6 +17,7 @@ that is not an oversight. Physical post cannot be recalled.
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,6 +41,13 @@ def _out(obj, as_json):
 def fail(message, code=1):
     print(f"error: {message}", file=sys.stderr)
     raise SystemExit(code)
+
+
+def _date(stamp):
+    """A UNIX timestamp as a date, or an empty string if there is none."""
+    if not isinstance(stamp, (int, float)) or not stamp:
+        return ""
+    return datetime.fromtimestamp(stamp, tz=timezone.utc).strftime("%d %b %Y")
 
 
 def _describe_draft(draft, as_json=False):
@@ -129,7 +137,9 @@ def cmd_services(args):
         if missing:
             print(f"  x = not offered by {prov.name}: {', '.join(missing)}")
             print()
-    print("  Signed For is a delivery record, not proof of service. See references/postage.md.")
+    print("  For court documents served under CPR 6.26, Signed For proves no more than")
+    print("  first class. If a lease, contract or statute names a delivery method, use")
+    print("  that method. Postage facts, not legal advice: see references/postage.md.")
     print()
 
 
@@ -328,6 +338,10 @@ def cmd_status(args):
         print(f"  {m.recipient or m.id}")
         print(f"    status   {m.status}")
         print(f"    service  {SERVICES.get(m.service, {}).get('label', m.service)}")
+        if m.shipped_date:
+            # The date Royal Mail took the letter. It is the date of posting,
+            # not the time `send` ran - see references/postage.md.
+            print(f"    posted   {_date(m.shipped_date)}")
         if m.tracking_number:
             print(f"    tracking {m.tracking_number}")
             print(f"             https://www.royalmail.com/track-your-item#/tracking-results/{m.tracking_number}")
@@ -352,7 +366,6 @@ def cmd_log(args):
         print(f"  nothing posted from this repository yet ({log_dir}/sent.jsonl)")
         return
 
-    import datetime as _dt
     print()
     print(f"  {log_dir}")
     print()
@@ -362,9 +375,7 @@ def cmd_log(args):
         pence = e.get("cost_pence", 0)
         if not e.get("testmode"):
             total += pence
-        when = e.get("confirmed_at")
-        date = (_dt.datetime.fromtimestamp(when, tz=_dt.timezone.utc).strftime("%d %b %Y")
-                if isinstance(when, (int, float)) and when else "")
+        date = _date(e.get("confirmed_at"))
         print(f"  {date}  {', '.join(e.get('recipients') or ['?'])}{mode}")
         print(f"    {e.get('service_label') or e.get('service','?')}  -  "
               f"£{pence / 100:.2f}")
@@ -442,7 +453,7 @@ def build_parser():
                    "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_send)
 
-    s = sub.add_parser("status", parents=[common], help="status and tracking number for a job")
+    s = sub.add_parser("status", parents=[common], help="status, posting date and tracking number for a job")
     s.add_argument("id")
     s.set_defaults(func=cmd_status)
 

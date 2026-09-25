@@ -103,10 +103,20 @@ methods, and a line in the registry. Nothing else changes.
 
 ## Postage advice is a factual matter
 
-`references/postage.md` says Signed For is not proof of service, and cites CPR
-6.26 and *Diriye v Bojaj* (2020) EWCA Civ 1400 for it. This is deliberate and
-correct: people routinely pay four times the price of first class under a
-misconception, and the skill exists partly to say so.
+The skill gives postage facts, not legal advice. Keep it that way.
+
+`references/postage.md` says that for a court document served by post under
+CPR 6.26, Signed For is not proof of service, and cites *Diriye v Bojaj* (2020)
+EWCA Civ 1400 for it. That is correct for court documents, and only for them.
+
+It is wrong for a notice under a lease, a contract or a statute that names the
+method, often "registered post or recorded delivery". Other rules apply there,
+such as the Recorded Delivery Service Act 1962 s.1 and the Law of Property Act
+1925 s.196(4). So `postage.md` tells the agent to send the user to that clause
+and use the method it names, and never to say another method will do. Do not
+widen the CPR point beyond court documents again: an agent following it could
+talk a user out of the method their lease requires and cost them a valid
+notice. `tests/test_docs.py` holds the limit.
 
 If you update prices or services, update that file and the README table in the
 same change, and keep the rate card's effective date accurate. Do not let the

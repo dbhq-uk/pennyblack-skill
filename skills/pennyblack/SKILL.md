@@ -97,15 +97,28 @@ VAT is added on top, so `signed` bills at about £5.21. The draft step always
 returns the real figure including VAT - quote that, not this table.
 
 Read `references/postage.md` before advising anyone which to buy, because the
-obvious answer is often wrong.
+obvious answer is often wrong. **It gives postage facts, not legal advice, and
+so do you.** If whether a letter was validly served matters, the user should ask
+a solicitor.
 
-**The thing people get wrong:** Signed For is a delivery record, not proof of
-service. Under CPR 6.26 and *Diriye v Bojaj*, first class post is deemed served
-on the second business day whether or not anybody signed, and what a court wants
-certified is the **date of posting**. If someone is paying four times the price
-of first class to "make it official", say so. If they need evidence that will
-actually hold up, that is Special Delivery, the only service where the signature
-can be viewed.
+**First, ask whether a document names the method.** If a lease, a contract, a
+court order or a statute says how the letter must be sent, ask the user to read
+that clause and use the method it names. Never tell them another method will
+do. Where it says registered post or recorded delivery, use `special`. Getting
+this wrong can cost the user a valid notice, such as a break notice.
+
+**Court documents served under CPR 6.26, and only those:** Signed For is a
+delivery record, not proof of service. Under CPR 6.26 and *Diriye v Bojaj*,
+first class post is deemed served on the second business day whether or not
+anybody signed, and what a court wants certified is the **date of posting**. If
+someone serving a court document is paying four times the price of first class
+to "make it official", tell them. None of this applies to a notice under a
+lease, a contract or a statute.
+
+pennyblack gives no certificate of posting. The date of posting is the
+`shipped_date` that `status` shows, not the time `send` ran. If the user needs
+evidence that will actually hold up, that is Special Delivery, the only service
+where the signature can be viewed.
 
 ## Checking on a letter
 

@@ -11,11 +11,43 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import ledger  # noqa: E402
 import pennyblack  # noqa: E402
+import providers  # noqa: E402
+from providers.base import Mailing, Provider, SERVICES  # noqa: E402
+
+
+class StubProvider(Provider):
+    """A provider with no network at all. Offers every service."""
+
+    name = "stub"
+    service_map = {s: s for s in SERVICES}
+
+    def __init__(self, config=None, *, mailings=None):
+        super().__init__(config or {})
+        self.mailings = mailings or []
+        self.calls = []
+
+    def status(self, print_id):
+        self.calls.append(("status", print_id))
+        return self.mailings
+
+
+@contextlib.contextmanager
+def stub_provider(prov):
+    """Make every command use `prov`.
+
+    The registry is cleared first, so the real Intelliprint class cannot be
+    built by accident, and the config is faked so no key file is read.
+    """
+    with mock.patch.dict(providers.REGISTRY, {"stub": lambda config: prov}, clear=True), \
+            mock.patch.object(pennyblack.cfg, "load",
+                              return_value={"provider": "stub", "api_key": "k"}):
+        yield prov
 
 
 def _subcommands():
@@ -83,6 +115,27 @@ class TestJsonFlag(unittest.TestCase):
             code, out, _ = run(["--json", "log", "--log-dir", tmp])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)[0]["id"], "print_a")
+
+
+class TestStatus(unittest.TestCase):
+    def test_shows_the_posting_date(self):
+        """The date of posting is shipped_date, not the time send ran."""
+        prov = StubProvider(mailings=[Mailing(
+            id="ltr_1", status="sent", service="first", recipient="Acme Ltd",
+            shipped_date=1789641495,
+        )])
+        with stub_provider(prov):
+            code, out, _ = run(["status", "print_x"])
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"posted\s+17 Sep 2026")
+
+    def test_no_posting_date_before_it_ships(self):
+        prov = StubProvider(mailings=[Mailing(
+            id="ltr_1", status="waiting_to_print", service="first", recipient="Acme Ltd",
+        )])
+        with stub_provider(prov):
+            _, out, _ = run(["status", "print_x"])
+        self.assertNotIn("posted", out)
 
 
 if __name__ == "__main__":
