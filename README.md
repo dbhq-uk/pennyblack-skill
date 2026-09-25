@@ -51,12 +51,17 @@ Physical post cannot be recalled and costs money every time. So the flow is:
 create the letter, get the real price and a PDF preview of the actual thing,
 show a human, wait. Only `send` spends anything.
 
-**It tells you the truth about what you are buying.** Most people reach for
-Signed For because they want to prove a letter was served. It does not do that.
-Under CPR 6.26 and *Diriye v Bojaj*, first class post is deemed served on the
-second business day whether or not anyone signed, and what a court wants
-certified is the date of posting. pennyblack says so rather than quietly taking
-four times the price of a first class stamp.
+**It tells you the truth about what you are buying.** For a court document
+served by post under CPR 6.26, Signed For proves no more than first class. Under
+*Diriye v Bojaj*, first class post is deemed served on the second business day
+whether or not anyone signed, and what a court wants certified is the date of
+posting. pennyblack says so rather than quietly taking four times the price of a
+first class stamp.
+
+That point is about court documents only. If a lease, a contract or a statute
+names the delivery method, often "registered post or recorded delivery", the
+skill tells the agent to send the user to that clause and use the method it
+names. It gives postage facts, not legal advice.
 See [`references/postage.md`](skills/pennyblack/references/postage.md).
 
 **Test mode is the default.** Every draft is a test draft until you pass
@@ -136,7 +141,7 @@ what you send.
 | `draft <file.pdf>` | upload and price a letter. Free. Nothing is printed |
 | `send <id>` | commit a draft. **This posts it and charges you** |
 | `cancel <id>` | throw away an unconfirmed draft |
-| `status <id>` | status and Royal Mail tracking number |
+| `status <id>` | status, posting date and Royal Mail tracking number |
 | `log` | what this machine has posted, with costs and tracking numbers |
 
 Add `--json` to any of them for machine-readable output, before or after the
