@@ -26,6 +26,14 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from zoneinfo import ZoneInfo
+    UK = ZoneInfo("Europe/London")
+except Exception:  # no time zone database on this machine
+    # Only a date is ever shown, and UK time is never more than an hour from
+    # UTC, so this is wrong at most for an hour after midnight in summer.
+    UK = timezone.utc
+
 LEDGER_DIRNAME = ".pennyblack"
 SENT_FILENAME = "sent.jsonl"
 
@@ -36,8 +44,8 @@ This folder is the record of physical letters sent from this repository with
 
 - `sent.jsonl` - one line per letter: recipient, postage service, cost,
   tracking number, and the date it was confirmed. Anything that happens to a
-  letter later, such as a cancel, is added as a new line with an `event` field.
-  No line is ever rewritten.
+  letter later, such as a cancel, a tracking number or a return, is added as a
+  new line with an `event` field. No line is ever rewritten.
 - `*.pdf` - the exact document that was posted, captured at the moment of
   sending. The provider's own preview link expires within the hour, so this is
   the only durable copy of what actually went in the envelope.
@@ -89,14 +97,17 @@ def _slug(text: str, limit: int = 40) -> str:
     return out[:limit].strip("-") or "letter"
 
 
+def uk_time(stamp) -> datetime:
+    """A UNIX timestamp in UK time, or None. Dates are shown as the user
+    lives them, not in UTC."""
+    if not isinstance(stamp, (int, float)) or isinstance(stamp, bool) or not stamp:
+        return None
+    return datetime.fromtimestamp(stamp, tz=UK)
+
+
 def document_name(entry: dict) -> str:
     """A filename that sorts by date and says who it went to."""
-    stamp = entry.get("confirmed_at")
-    when = (
-        datetime.fromtimestamp(stamp, tz=timezone.utc)
-        if isinstance(stamp, (int, float)) and stamp
-        else datetime.now(tz=timezone.utc)
-    ).strftime("%Y-%m-%d")
+    when = (uk_time(entry.get("confirmed_at")) or datetime.now(tz=UK)).strftime("%Y-%m-%d")
     who = _slug((entry.get("recipients") or ["letter"])[0])
     short = (entry.get("id") or "")[-8:] or "unknown"
     return f"{when}-{who}-{short}.pdf"
@@ -157,6 +168,27 @@ def letters(entries: list) -> list:
 def events(entries: list, print_id: str) -> list:
     """The event lines for one print job, oldest first."""
     return [e for e in entries if "event" in e and e.get("id") == print_id]
+
+
+def latest_letters(entries: list, print_id: str) -> list:
+    """Each letter's last known state for a job, from its newest event that
+    carries letters. None if nothing has been heard since send."""
+    for event in reversed(events(entries, print_id)):
+        if event.get("letters"):
+            return event["letters"]
+    return None
+
+
+def record_update(print_id: str, letters_now: list, *, log_dir: Path) -> Path:
+    """Append a status line for a job, if anything about its letters changed.
+
+    Returns the file written, or None when the record already had this state.
+    Checking a letter ten times writes one line, not ten.
+    """
+    if latest_letters(read(log_dir), print_id) == letters_now:
+        return None
+    return record_event({"event": "status", "id": print_id, "letters": letters_now},
+                        log_dir=log_dir)
 
 
 def contains(log_dir: Path, print_id: str) -> bool:

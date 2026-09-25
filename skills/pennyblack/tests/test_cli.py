@@ -10,6 +10,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -78,6 +79,8 @@ class StubProvider(Provider):
 
     def status(self, print_id):
         self.calls.append(("status", print_id))
+        if isinstance(self.mailings, dict):
+            return self.mailings.get(print_id, [])
         return self.mailings
 
     def called(self, name):
@@ -164,25 +167,150 @@ class TestJsonFlag(unittest.TestCase):
         self.assertEqual(json.loads(out)[0]["id"], "print_a")
 
 
-class TestStatus(unittest.TestCase):
+DAY = 86400
+
+
+def _mailing(**over):
+    base = dict(id="ltr_1", status="sent", service="signed", recipient="Acme Ltd",
+                shipped_date=1789641495)
+    base.update(over)
+    return Mailing(**base)
+
+
+class _RecordCase(unittest.TestCase):
+    """A temporary record with one sent letter in it."""
+
+    JOB = "print_stub0001"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+        ledger.record({"id": self.JOB, "service": "signed", "cost_pence": 521,
+                       "recipients": ["Acme Ltd"], "testmode": False,
+                       "confirmed_at": 1789641495}, log_dir=self.log_dir)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def status(self, *mailings, job=None):
+        prov = StubProvider(mailings=list(mailings))
+        with stub_provider(prov):
+            return run(["status", job or self.JOB, "--log-dir", str(self.log_dir)])
+
+
+class TestStatus(_RecordCase):
     def test_shows_the_posting_date(self):
         """The date of posting is shipped_date, not the time send ran."""
-        prov = StubProvider(mailings=[Mailing(
-            id="ltr_1", status="sent", service="first", recipient="Acme Ltd",
-            shipped_date=1789641495,
-        )])
-        with stub_provider(prov):
-            code, out, _ = run(["status", "print_x"])
+        code, out, _ = self.status(_mailing(service="first"))
         self.assertEqual(code, 0)
         self.assertRegex(out, r"posted\s+17 Sep 2026")
 
     def test_no_posting_date_before_it_ships(self):
-        prov = StubProvider(mailings=[Mailing(
-            id="ltr_1", status="waiting_to_print", service="first", recipient="Acme Ltd",
-        )])
-        with stub_provider(prov):
-            _, out, _ = run(["status", "print_x"])
+        _, out, _ = self.status(_mailing(status="waiting_to_print", shipped_date=None))
         self.assertNotIn("posted", out)
+
+    def test_a_tracking_number_that_arrives_later_reaches_the_record(self):
+        self.status(_mailing(tracking_number="AB123456789GB"))
+        events = ledger.events(ledger.read(self.log_dir), self.JOB)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "status")
+        letter = events[0]["letters"][0]
+        self.assertEqual(letter["tracking_number"], "AB123456789GB")
+        self.assertEqual(letter["status"], "sent")
+        self.assertEqual(letter["shipped_date"], 1789641495)
+
+    def test_the_send_line_is_never_rewritten(self):
+        before = (self.log_dir / "sent.jsonl").read_text()
+        self.status(_mailing(tracking_number="AB123456789GB"))
+        self.assertTrue((self.log_dir / "sent.jsonl").read_text().startswith(before))
+
+    def test_no_change_writes_no_new_line(self):
+        self.status(_mailing(tracking_number="AB123456789GB"))
+        self.status(_mailing(tracking_number="AB123456789GB"))
+        self.assertEqual(len(ledger.events(ledger.read(self.log_dir), self.JOB)), 1)
+
+    def test_a_job_that_is_not_in_the_record_is_not_written(self):
+        self.status(_mailing(), job="print_elsewhere")
+        self.assertEqual(ledger.events(ledger.read(self.log_dir), "print_elsewhere"), [])
+
+    def test_log_shows_a_tracking_number_that_arrived_after_send(self):
+        self.status(_mailing(tracking_number="AB123456789GB"))
+        _, out, _ = run(["log", "--log-dir", str(self.log_dir)])
+        self.assertIn("AB123456789GB", out)
+
+    def test_returned_says_why(self):
+        _, out, _ = self.status(_mailing(status="returned",
+                                         returned_reason="Not at this address",
+                                         returned_date=1789900000))
+        self.assertIn("could not deliver", out)
+        self.assertIn("Not at this address", out)
+        self.assertNotIn("not issued yet", out)
+        letter = ledger.events(ledger.read(self.log_dir), self.JOB)[0]["letters"][0]
+        self.assertEqual(letter["returned"]["reason"], "Not at this address")
+
+    def test_each_failure_has_its_own_message(self):
+        seen = {}
+        for status in ("returned", "failed_wrong_address", "invalid_address", "cancelled"):
+            with self.subTest(status=status):
+                _, out, _ = self.status(_mailing(status=status, shipped_date=None))
+                self.assertNotIn("not issued yet", out)
+                line = next(ln for ln in out.splitlines() if "status" in ln)
+                self.assertIn(status, line)
+                seen[status] = line
+        self.assertEqual(len(set(seen.values())), 4, "two failures read the same")
+
+    def test_signed_for_tracking_comes_after_delivery(self):
+        _, out, _ = self.status(_mailing(status="sent"))
+        self.assertIn("after delivery", out)
+
+
+class TestRefresh(unittest.TestCase):
+    """log --refresh polls every letter that can still change, and only those."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+        now = int(time.time())
+        for job, testmode in (("print_open", False), ("print_returned", False),
+                              ("print_old", False), ("print_test", True)):
+            ledger.record({"id": job, "service": "first", "cost_pence": 233,
+                           "recipients": ["Acme Ltd"], "testmode": testmode,
+                           "confirmed_at": now - 2 * DAY}, log_dir=self.log_dir)
+        ledger.record_event({"event": "status", "id": "print_returned", "letters": [
+            {"id": "ltr_r", "status": "returned"}]}, log_dir=self.log_dir)
+        ledger.record_event({"event": "status", "id": "print_old", "letters": [
+            {"id": "ltr_o", "status": "sent", "shipped_date": now - 60 * DAY}]},
+            log_dir=self.log_dir)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_updates_open_letters_only(self):
+        prov = StubProvider(mailings={"print_open": [_mailing(
+            id="ltr_a", status="sent", service="first")]})
+        with stub_provider(prov):
+            code, out, err = run(["log", "--refresh", "--log-dir", str(self.log_dir)])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(prov.called("status"), [("status", "print_open")])
+        events = ledger.events(ledger.read(self.log_dir), "print_open")
+        self.assertEqual(events[-1]["letters"][0]["status"], "sent")
+
+    def test_log_without_refresh_calls_nothing(self):
+        prov = StubProvider()
+        with stub_provider(prov):
+            run(["log", "--log-dir", str(self.log_dir)])
+        self.assertEqual(prov.calls, [])
+
+
+class TestUkDates(unittest.TestCase):
+    def test_dates_are_uk_time_not_utc(self):
+        # 23:30 UTC on 17 Sep 2026 is 00:30 on 18 Sep in London (BST).
+        self.assertEqual(pennyblack._date(1789687800), "18 Sep 2026")
+
+    def test_document_names_use_uk_time(self):
+        name = ledger.document_name({"id": "print_x", "confirmed_at": 1789687800,
+                                     "recipients": ["Acme Ltd"]})
+        self.assertTrue(name.startswith("2026-09-18"), name)
 
 
 class TestSend(unittest.TestCase):

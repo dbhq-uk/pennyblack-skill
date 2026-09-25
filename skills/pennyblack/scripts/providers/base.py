@@ -72,6 +72,56 @@ EVIDENCE_SERVICES = {
     name for name, meta in SERVICES.items() if meta["signature"] or meta["tracked"]
 }
 
+#: What each letter status means, and what to do about it. The names are the
+#: ones Intelliprint documents, which are generic enough to be pennyblack's own;
+#: a provider with different names maps onto these. `final` means the status
+#: will not change again.
+LETTER_STATUSES = {
+    "draft": {
+        "means": "not confirmed yet - nothing has been posted",
+        "next": "send it, or cancel it",
+        "final": False,
+    },
+    "waiting_to_print": {
+        "means": "waiting to be printed",
+        "next": "it can still be cancelled, with the user's say-so",
+        "final": False,
+    },
+    "printing": {"means": "being printed", "next": "too late to cancel", "final": False},
+    "enclosing": {"means": "being put in its envelope", "next": "", "final": False},
+    "shipping": {
+        "means": "printed and waiting for Royal Mail to collect it",
+        "next": "",
+        "final": False,
+    },
+    "sent": {"means": "handed to Royal Mail", "next": "", "final": False},
+    "returned": {
+        "means": "Royal Mail could not deliver it, and it came back to the print house",
+        "next": "check the address with the user. If it was a notice where service "
+                "matters, tell them now: a returned letter can mean it was not served",
+        "final": True,
+    },
+    "cancelled": {
+        "means": "cancelled before printing and refunded - nothing was posted",
+        "next": "",
+        "final": True,
+    },
+    "invalid_address": {
+        "means": "Royal Mail refused to collect it because it judged the address "
+                 "invalid - nothing was delivered",
+        "next": "check the address with the user, then draft it again",
+        "final": True,
+    },
+    "failed_wrong_address": {
+        "means": "the print house could not post it because the address was wrong "
+                 "- nothing was delivered",
+        "next": "check the address with the user, then draft it again",
+        "final": True,
+    },
+}
+
+FINAL_STATUSES = {name for name, meta in LETTER_STATUSES.items() if meta["final"]}
+
 
 @dataclass
 class Address:
@@ -127,6 +177,8 @@ class Mailing:
     tracking_number: Optional[str] = None
     recipient: Optional[str] = None
     shipped_date: Optional[int] = None
+    returned_reason: Optional[str] = None
+    returned_date: Optional[int] = None
     raw: dict = field(default_factory=dict)
 
 

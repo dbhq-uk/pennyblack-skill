@@ -19,7 +19,7 @@ carries it to a letterbox.
 
 pennyblack is a Claude Code and Codex skill for posting physical letters in the
 UK - including **Signed For**, **Tracked 24/48** and **Special Delivery** - and
-it hands you back the real Royal Mail tracking number.
+it records the real Royal Mail tracking number when Royal Mail issues it.
 
 It posts your PDF **exactly as it is**. No conversion, no typesetting, no
 reflowing. What you see in the PDF is what comes out of the envelope.
@@ -146,8 +146,8 @@ what you send.
 | `draft <file.pdf>` | upload and price a letter. Free. Nothing is printed |
 | `send <id>` | commit a draft. **This posts it and charges you** |
 | `cancel <id>` | throw away a draft, or recall a sent letter that has not been printed yet |
-| `status <id>` | status, posting date and Royal Mail tracking number |
-| `log` | what this machine has posted, with costs and tracking numbers |
+| `status <id>` | status, posting date and Royal Mail tracking number, written to the record |
+| `log` | what has been posted from this repository, with costs, status and tracking numbers. `--refresh` checks every letter that can still change first |
 
 Add `--json` to any of them for machine-readable output, before or after the
 subcommand.
@@ -173,8 +173,9 @@ document proves what.
 
 `sent.jsonl` is append-only and one line per letter, so two sessions posting
 letters produce two lines and a merge conflict resolves by keeping both. A
-later cancel is added as a new line, never by rewriting one. `pennyblack log`
-renders it.
+later cancel, or a status check that finds a tracking number or a return, is
+added as a new line, never by rewriting one. `pennyblack log` renders it, in UK
+time.
 
 Use `--log-dir` to keep a particular client's letters with the rest of their
 correspondence instead.
