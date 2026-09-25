@@ -194,8 +194,9 @@ document proves what.
 `sent.jsonl` is append-only and one line per letter, so two sessions posting
 letters produce two lines and a merge conflict resolves by keeping both. A
 later cancel, or a status check that finds a tracking number or a return, is
-added as a new line, never by rewriting one. `pennyblack log` renders it, in UK
-time.
+added as a new line, never by rewriting one. Only a letter already in the record
+gets one, so `cancel` and `status` never start a record somewhere new.
+`pennyblack log` renders it, in UK time.
 
 Use `--log-dir` to keep a particular client's letters with the rest of their
 correspondence instead.

@@ -149,7 +149,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" cancel print_YheDXex1cHsyD9x
 
 `cancel` reports each letter: `cancelled` means it will not be printed, and any
 other status means it was too late. Pass the result on as it is. A cancel on a
-sent letter is added to the record.
+sent letter is added to the record, if the letter is in it. If it is not, for
+example because it was sent with `--log-dir`, `cancel` writes nothing and prints
+the line on stderr. Add that line to the record the letter was sent into.
 
 ## Choosing the postage
 
