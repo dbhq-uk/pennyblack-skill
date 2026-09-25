@@ -359,6 +359,7 @@ class Intelliprint(Provider):
     def _mailings(self, payload: dict) -> list:
         out = []
         for letter in payload.get("letters") or []:
+            returned = letter.get("returned") or {}
             out.append(Mailing(
                 id=letter.get("id", ""),
                 status=letter.get("status", "unknown"),
@@ -366,6 +367,8 @@ class Intelliprint(Provider):
                 tracking_number=letter.get("tracking_number") or None,
                 recipient=(letter.get("address") or {}).get("name"),
                 shipped_date=letter.get("shipped_date"),
+                returned_reason=returned.get("reason") or None,
+                returned_date=returned.get("date") or None,
                 raw=letter,
             ))
         return out

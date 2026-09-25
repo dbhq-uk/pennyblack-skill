@@ -12,6 +12,8 @@ from .base import (  # noqa: F401  (re-exported for callers)
     Cost,
     Draft,
     EVIDENCE_SERVICES,
+    FINAL_STATUSES,
+    LETTER_STATUSES,
     Mailing,
     Provider,
     SERVICES,

@@ -59,6 +59,13 @@ posted. Two tests assert the separation. Putting the record back in `$HOME`
 would hide a business record in a dotfile; putting the key in the repository
 would commit it.
 
+**The record is append-only, and it keeps up with the letter.** `send` writes
+one line. After that, `cancel`, `status` and `log --refresh` append event lines
+(a cancel, a tracking number, a posting date, a return and its reason). Nothing
+rewrites an earlier line, so a merge still resolves by keeping both sides.
+`status` writes only for a job that is already in the record, so it never
+starts a record of names and addresses somewhere new.
+
 **The document is captured at send time or never.** The provider's preview link
 is signed and short-lived. If a change defers fetching it, the record silently
 degrades to a tracking number, which proves something arrived but not what.

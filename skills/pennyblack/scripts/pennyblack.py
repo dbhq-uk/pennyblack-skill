@@ -17,7 +17,7 @@ that is not an oversight. Physical post cannot be recalled once it is printed.
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,7 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config as cfg  # noqa: E402
 import ledger  # noqa: E402
 import providers  # noqa: E402
-from providers.base import Address, EVIDENCE_SERVICES, SERVICES  # noqa: E402
+from providers.base import (  # noqa: E402
+    Address, EVIDENCE_SERVICES, FINAL_STATUSES, LETTER_STATUSES, SERVICES,
+)
 
 
 # --------------------------------------------------------------------------
@@ -44,10 +46,58 @@ def fail(message, code=1):
 
 
 def _date(stamp):
-    """A UNIX timestamp as a date, or an empty string if there is none."""
-    if not isinstance(stamp, (int, float)) or not stamp:
-        return ""
-    return datetime.fromtimestamp(stamp, tz=timezone.utc).strftime("%d %b %Y")
+    """A UNIX timestamp as a UK date, or an empty string if there is none."""
+    when = ledger.uk_time(stamp)
+    return when.strftime("%d %b %Y") if when else ""
+
+
+#: A sent letter is checked by `log --refresh` for this long after it was
+#: posted. A Signed For number arrives after delivery, and a return can come
+#: back after the letter shows as sent, so "sent" is not final straight away.
+SETTLE_DAYS = 30
+
+
+def _letter_state(m):
+    """One letter as it goes into the record. Only what is known is kept."""
+    state = {"id": m.id, "recipient": m.recipient, "status": m.status}
+    if m.tracking_number:
+        state["tracking_number"] = m.tracking_number
+    if m.shipped_date:
+        state["shipped_date"] = m.shipped_date
+    if m.returned_reason or m.returned_date:
+        state["returned"] = {"reason": m.returned_reason, "date": m.returned_date}
+    return state
+
+
+def _update_record(print_id, mailings, log_dir):
+    """Write what the provider says now into the record, if the job is in it.
+
+    A job that is not in this record was not posted from here, so nothing is
+    written - status must never start a record of personal data somewhere new.
+    """
+    if not mailings or not ledger.contains(log_dir, print_id):
+        return None
+    return ledger.record_update(print_id, [_letter_state(m) for m in mailings],
+                                log_dir=log_dir)
+
+
+def _is_open(entry, entries, now):
+    """Can this letter still change? Test letters never do."""
+    if entry.get("testmode"):
+        return False
+    latest = ledger.latest_letters(entries, entry.get("id"))
+    if latest is None:
+        return True
+    for letter in latest:
+        status = letter.get("status")
+        if status in FINAL_STATUSES:
+            continue
+        if status == "sent":
+            posted = letter.get("shipped_date") or entry.get("confirmed_at") or now
+            if now - posted > SETTLE_DAYS * 86400:
+                continue
+        return True
+    return False
 
 
 def _describe_draft(draft, as_json=False):
@@ -342,7 +392,7 @@ def cmd_send(args):
             print(f"  tracking   {t}")
             print(f"             https://www.royalmail.com/track-your-item#/tracking-results/{t}")
     elif draft.service in EVIDENCE_SERVICES and not draft.testmode:
-        print("  tracking   not issued yet - check again once it has been dispatched:")
+        print("  tracking   not issued yet - check again later with:")
         print(f"             pennyblack status {draft.id}")
     print(f"  recorded   {written['sent']}")
     if written["document"]:
@@ -358,20 +408,30 @@ def cmd_status(args):
     conf = cfg.load()
     prov = providers.get(conf)
     mailings = prov.status(args.id)
+
+    log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+    written = _update_record(args.id, mailings, log_dir)
+
     if args.json:
-        return _out([{
-            "id": m.id, "status": m.status, "service": m.service,
-            "tracking_number": m.tracking_number, "recipient": m.recipient,
-            "shipped_date": m.shipped_date,
-        } for m in mailings], True)
+        return _out([dict(
+            _letter_state(m), service=m.service,
+            means=LETTER_STATUSES.get(m.status, {}).get("means", ""),
+            final=m.status in FINAL_STATUSES,
+        ) for m in mailings], True)
 
     if not mailings:
         print(f"  no mail items on {args.id}")
         return
     print()
     for m in mailings:
+        meta = LETTER_STATUSES.get(m.status, {})
         print(f"  {m.recipient or m.id}")
-        print(f"    status   {m.status}")
+        print(f"    status   {m.status}" + (f" - {meta['means']}" if meta else ""))
+        if m.status == "returned" and (m.returned_reason or m.returned_date):
+            print(f"    reason   {m.returned_reason or 'not given'}"
+                  + (f", returned {_date(m.returned_date)}" if m.returned_date else ""))
+        if meta.get("next"):
+            print(f"    next     {meta['next']}")
         print(f"    service  {SERVICES.get(m.service, {}).get('label', m.service)}")
         if m.shipped_date:
             # The date Royal Mail took the letter. It is the date of posting,
@@ -380,8 +440,14 @@ def cmd_status(args):
         if m.tracking_number:
             print(f"    tracking {m.tracking_number}")
             print(f"             https://www.royalmail.com/track-your-item#/tracking-results/{m.tracking_number}")
-        elif m.service in EVIDENCE_SERVICES:
-            print("    tracking not issued yet")
+        elif m.service in EVIDENCE_SERVICES and m.status not in FINAL_STATUSES:
+            if SERVICES.get(m.service, {}).get("tracked"):
+                print("    tracking not issued yet - check again later")
+            else:
+                print("    tracking issued after delivery for Signed For - check again later")
+    if written:
+        print()
+        print(f"  recorded   {written}")
     print()
 
 
@@ -446,9 +512,27 @@ def cmd_cancel(args):
     return result
 
 
+def _refresh(log_dir, entries):
+    """Poll every letter that can still change, and record what it says now."""
+    conf = cfg.load()
+    prov = providers.get(conf)
+    now = int(time.time())
+    checked = 0
+    for entry in ledger.letters(entries):
+        if not _is_open(entry, entries, now):
+            continue
+        _update_record(entry["id"], prov.status(entry["id"]), log_dir)
+        checked += 1
+    return checked
+
+
 def cmd_log(args):
     log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
     entries = ledger.read(log_dir)
+    checked = None
+    if args.refresh and entries:
+        checked = _refresh(log_dir, entries)
+        entries = ledger.read(log_dir)
     if args.json:
         return _out(entries, True)
     if not entries:
@@ -471,7 +555,20 @@ def cmd_log(args):
               f"£{pence / 100:.2f}")
         if e.get("reference"):
             print(f"    ref      {e['reference']}")
-        for t in e.get("tracking_numbers", []):
+        latest = ledger.latest_letters(entries, e.get("id")) or []
+        tracking = list(e.get("tracking_numbers", []))
+        tracking += [ltr["tracking_number"] for ltr in latest
+                     if ltr.get("tracking_number") and ltr["tracking_number"] not in tracking]
+        for ltr in latest:
+            line = f"    status   {ltr.get('status', '?')}"
+            if ltr.get("shipped_date"):
+                line += f", posted {_date(ltr['shipped_date'])}"
+            if (ltr.get("returned") or {}).get("reason"):
+                line += f", returned: {ltr['returned']['reason']}"
+            if len(latest) > 1:
+                line += f"  ({ltr.get('recipient') or ltr.get('id')})"
+            print(line)
+        for t in tracking:
             print(f"    tracking {t}")
         if e.get("document"):
             print(f"    document {e['document']}")
@@ -482,6 +579,8 @@ def cmd_log(args):
                       f" on {_date(ev.get('at'))}")
         print()
     print(f"  {len(sent)} letter(s) recorded, £{total / 100:.2f} spent live")
+    if checked is not None:
+        print(f"  checked {checked} job(s) that can still change with the provider")
     print()
 
 
@@ -548,8 +647,12 @@ def build_parser():
                    "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_send)
 
-    s = sub.add_parser("status", parents=[common], help="status, posting date and tracking number for a job")
+    s = sub.add_parser("status", parents=[common],
+                       help="status, posting date and tracking number for a job, "
+                            "written to the record")
     s.add_argument("id")
+    s.add_argument("--log-dir", help="where the record lives "
+                   "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser("cancel", parents=[common],
@@ -562,6 +665,9 @@ def build_parser():
 
     s = sub.add_parser("log", parents=[common], help="what has been posted from this repository")
     s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--refresh", action="store_true",
+                   help="check every letter that can still change with the provider "
+                        "first, and record what it says")
     s.add_argument("--log-dir", help="where the record lives "
                    "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_log)

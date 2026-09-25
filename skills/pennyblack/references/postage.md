@@ -167,8 +167,10 @@ The API issues a Royal Mail tracking number for these services only:
 `signed`, `signed-second`, `tracked-24`, `tracked-48`, `special`, `special-9am`
 
 Plain `first` and `second` produce no tracking number, because there is nothing
-to track. The number appears once the item is dispatched, not at the moment you
-confirm the job - so `status` a day later, not immediately.
+to track. The number never appears at the moment you confirm the job. For Signed
+For, Intelliprint lists it as available after delivery. `pennyblack status <id>`
+or `pennyblack log --refresh` fetches it when it exists, and writes it to the
+record.
 
 ## Sources
 

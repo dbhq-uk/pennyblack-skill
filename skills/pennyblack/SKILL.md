@@ -151,13 +151,24 @@ where the signature can be viewed.
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" status print_YheDXex1cHsyD9xosrgZu
-python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" log
+python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" log --refresh
 ```
 
+`status` asks the provider about one job, says what each letter's status means
+and what to do next, and writes anything new (status, posting date, tracking
+number, a return and its reason) to the record. `log --refresh` does the same for
+every letter that can still change, then shows the record. Dates are UK time.
+
 Tracking numbers are issued for `signed`, `signed-second`, `tracked-24`,
-`tracked-48`, `special` and `special-9am` only. They appear once the item has
-been dispatched, not at the moment of confirmation - so if `send` says "not
-issued yet", that is normal, and `status` will have it later.
+`tracked-48`, `special` and `special-9am` only, and never at the moment of
+confirmation. For Signed For, Intelliprint issues the number **after delivery**.
+So if `send` says "not issued yet", that is normal: `status` or `log --refresh`
+will pick it up and record it later.
+
+**A letter that failed says so.** `returned` (with Royal Mail's reason),
+`invalid_address`, `failed_wrong_address` and `cancelled` each get their own
+message. Pass it on to the user as it is. A return matters most for a notice
+where service matters - see `references/postage.md`.
 
 ## The record
 

@@ -220,6 +220,14 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(mailings[0].tracking_number, "AB123456789GB")
         self.assertEqual(mailings[0].status, "sent")
 
+    def test_a_return_keeps_its_reason_and_date(self):
+        payload = _payload()
+        payload["letters"][0].update({"status": "returned", "returned": {
+            "acknowledged": False, "date": 1789900000, "reason": "Not at this address"}})
+        m = StubbedIntelliprint({"api_key": "k"}, payload).status("prt_test123")[0]
+        self.assertEqual(m.returned_reason, "Not at this address")
+        self.assertEqual(m.returned_date, 1789900000)
+
     def test_absent_tracking_number_is_none_not_empty_string(self):
         prov = StubbedIntelliprint({"api_key": "k"}, _payload())
         self.assertIsNone(prov.status("prt_test123")[0].tracking_number)
