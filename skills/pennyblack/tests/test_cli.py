@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import ledger  # noqa: E402
 import pennyblack  # noqa: E402
 import providers  # noqa: E402
-from providers.base import Cost, Draft, Mailing, Provider, SERVICES  # noqa: E402
+from providers.base import (  # noqa: E402
+    Cancellation, Cost, Draft, Mailing, Provider, SERVICES,
+)
 
 PDF = b"%PDF-1.7 stub letter"
 
@@ -48,12 +50,18 @@ class StubProvider(Provider):
     name = "stub"
     service_map = {s: s for s in SERVICES}
 
-    def __init__(self, config=None, *, mailings=None, job=None, document=PDF):
+    def __init__(self, config=None, *, mailings=None, job=None, document=PDF,
+                 cancellation=None):
         super().__init__(config or {})
         self.mailings = mailings or []
         self.job = job or _job()
         self.document = document
+        self.cancellation = cancellation
         self.calls = []
+
+    def cancel(self, draft_id):
+        self.calls.append(("cancel", draft_id))
+        return self.cancellation
 
     def retrieve_draft(self, draft_id):
         self.calls.append(("retrieve_draft", draft_id))
@@ -252,6 +260,72 @@ class TestSend(unittest.TestCase):
         self.assertIs(got["captured"], False)
         self.assertIsNone(got["document"])
         self.assertEqual(got["ledger"], str(self.log_dir / "sent.jsonl"))
+
+
+class TestCancel(unittest.TestCase):
+    """A sent letter can be recalled until it is printed. cancel has to say
+    which letters were stopped and which had already gone to print."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def cancel(self, result, *extra):
+        with stub_provider(StubProvider(cancellation=result)):
+            return run(["cancel", "print_stub0001", "--log-dir", str(self.log_dir), *extra])
+
+    def mixed(self):
+        return Cancellation(id="print_stub0001", deleted=False, letters=[
+            Mailing(id="ltr_1", status="cancelled", service="first", recipient="Acme Ltd"),
+            Mailing(id="ltr_2", status="printing", service="first", recipient="Bloggs & Co"),
+        ])
+
+    def test_reports_each_letter(self):
+        code, out, _ = self.cancel(self.mixed())
+        self.assertEqual(code, 0)
+        acme = next(ln for ln in out.splitlines() if "Acme Ltd" in ln)
+        bloggs = next(ln for ln in out.splitlines() if "Bloggs & Co" in ln)
+        self.assertIn("cancelled", acme)
+        self.assertIn("printing", bloggs)
+        self.assertIn("too late", bloggs)
+        self.assertNotIn("too late", acme)
+        self.assertIn("1 of 2", out)
+
+    def test_json_reports_each_letter(self):
+        code, out, _ = self.cancel(self.mixed(), "--json")
+        got = json.loads(out)
+        self.assertEqual([(m["recipient"], m["status"]) for m in got["letters"]],
+                         [("Acme Ltd", "cancelled"), ("Bloggs & Co", "printing")])
+        self.assertEqual(got["cancelled"], 1)
+
+    def test_a_confirmed_job_gets_a_cancel_line_in_the_record(self):
+        ledger.record({"id": "print_stub0001", "cost_pence": 233,
+                       "recipients": ["Acme Ltd"]}, log_dir=self.log_dir)
+        self.cancel(self.mixed())
+        entries = ledger.read(self.log_dir)
+        self.assertEqual(len(entries), 2)
+        event = entries[-1]
+        self.assertEqual(event["event"], "cancel")
+        self.assertEqual(event["id"], "print_stub0001")
+        self.assertEqual([ltr["status"] for ltr in event["letters"]], ["cancelled", "printing"])
+
+    def test_a_deleted_draft_writes_nothing(self):
+        """Nothing was posted, so there is nothing to record."""
+        code, out, _ = self.cancel(Cancellation(id="print_stub0001", deleted=True))
+        self.assertEqual(code, 0)
+        self.assertIn("deleted", out)
+        self.assertEqual(ledger.read(self.log_dir), [])
+
+    def test_log_shows_the_cancel_and_does_not_count_it_as_a_letter(self):
+        ledger.record({"id": "print_stub0001", "cost_pence": 233, "testmode": False,
+                       "recipients": ["Acme Ltd"]}, log_dir=self.log_dir)
+        self.cancel(self.mixed())
+        _, out, _ = run(["log", "--log-dir", str(self.log_dir)])
+        self.assertIn("1 letter(s) recorded", out)
+        self.assertIn("cancelled", out)
 
 
 if __name__ == "__main__":

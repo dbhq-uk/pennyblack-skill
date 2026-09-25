@@ -27,7 +27,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .base import Cost, Draft, Mailing, Provider
+from .base import Cancellation, Cost, Draft, Mailing, Provider
 
 API_BASE = "https://api.intelliprint.net/v1"
 
@@ -309,8 +309,29 @@ class Intelliprint(Provider):
         )
         return self._to_draft(payload, service)
 
-    def cancel(self, draft_id: str) -> None:
-        self._request("DELETE", f"/prints/{draft_id}")
+    def cancel(self, draft_id: str) -> Cancellation:
+        """DELETE /prints/{id}.
+
+        On an unconfirmed job this deletes it whole (202, `deleted: true`). On
+        a confirmed job it cancels every letter still `waiting_to_print` and
+        refunds those; letters already printing or later carry on (200, the
+        print object). See https://www.intelliprint.net/docs/cancelling-print-jobs
+        """
+        try:
+            payload = self._request("DELETE", f"/prints/{draft_id}")
+        except IntelliprintError as exc:
+            if exc.status != 400:
+                raise
+            raise IntelliprintError(
+                f"Intelliprint cancelled nothing on {draft_id}. Only letters still "
+                "waiting to print can be cancelled. Check each letter with: "
+                f"pennyblack status {draft_id}\n  Intelliprint said: {exc.body or ''}".rstrip(),
+                status=exc.status, body=exc.body,
+            ) from exc
+        if payload.get("deleted"):
+            return Cancellation(id=payload.get("id", draft_id), deleted=True, raw=payload)
+        return Cancellation(id=payload.get("id", draft_id), deleted=False,
+                            letters=self._mailings(payload), raw=payload)
 
     def retrieve(self, print_id: str) -> dict:
         return self._request("GET", f"/prints/{print_id}")
@@ -333,7 +354,9 @@ class Intelliprint(Provider):
         return data if data[:5] == b"%PDF-" else None
 
     def status(self, print_id: str) -> list:
-        payload = self.retrieve(print_id)
+        return self._mailings(self.retrieve(print_id))
+
+    def _mailings(self, payload: dict) -> list:
         out = []
         for letter in payload.get("letters") or []:
             out.append(Mailing(

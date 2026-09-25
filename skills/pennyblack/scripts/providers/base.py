@@ -130,6 +130,21 @@ class Mailing:
     raw: dict = field(default_factory=dict)
 
 
+@dataclass
+class Cancellation:
+    """What a cancel did.
+
+    An unconfirmed draft is deleted whole (`deleted` is True, no letters). On a
+    confirmed job, each letter still waiting to print is cancelled and the rest
+    carry on, so `letters` holds each one's resulting status.
+    """
+
+    id: str
+    deleted: bool
+    letters: list = field(default_factory=list)
+    raw: dict = field(default_factory=dict)
+
+
 class Provider:
     """What a letter-sending backend has to be able to do.
 
@@ -162,7 +177,9 @@ class Provider:
     def confirm(self, draft_id: str) -> Draft:
         raise NotImplementedError
 
-    def cancel(self, draft_id: str) -> None:
+    def cancel(self, draft_id: str) -> "Cancellation":
+        """Delete an unconfirmed draft, or recall the letters of a confirmed
+        job that have not been printed yet. Return what happened to each."""
         raise NotImplementedError
 
     def status(self, print_id: str) -> list:

@@ -133,5 +133,36 @@ class TestPostingEvidence(unittest.TestCase):
         self.assertIn("pennyblack status", section)
 
 
+class TestRecall(unittest.TestCase):
+    """A sent letter can be recalled until printing starts. The docs used to
+    say it could not be recalled at all, so a user who spotted a mistake just
+    after send was told nothing could be done."""
+
+    def test_skill_md_and_readme_describe_recall_before_printing(self):
+        for path in (SKILL_MD, README):
+            with self.subTest(file=path.name):
+                text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+                self.assertIn("until printing starts", text)
+
+    def test_skill_md_needs_the_users_say_so(self):
+        self.assertIn("only with the user's say-so", SKILL_MD.read_text(encoding="utf-8").lower())
+
+    def test_cancel_help_describes_recall(self):
+        import sys
+        sys.path.insert(0, str(SKILL / "scripts"))
+        import pennyblack
+        parser = pennyblack.build_parser()
+        sub = next(a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction")
+        helps = {c.dest: c.help for c in sub._choices_actions}
+        self.assertIn("not been printed", helps["cancel"])
+
+    def test_nothing_says_post_can_never_be_recalled(self):
+        for path in (SKILL_MD, README, AGENTS, SKILL / "scripts" / "pennyblack.py"):
+            text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+            for m in re.finditer(r"cannot be recalled", text):
+                with self.subTest(file=path.name):
+                    self.assertIn("once", text[max(0, m.start() - 30):m.end() + 30])
+
+
 if __name__ == "__main__":
     unittest.main()

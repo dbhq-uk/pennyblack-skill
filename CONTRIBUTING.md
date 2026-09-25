@@ -34,7 +34,8 @@ To add one:
 2. Fill in `service_map`, mapping pennyblack's service names to the vendor's.
    **Leave out anything the vendor cannot do** - pennyblack will then say so
    plainly rather than silently downgrading a letter to a cheaper service.
-3. Implement `draft`, `confirm`, `cancel` and `status`.
+3. Implement `draft`, `confirm`, `cancel` and `status`. `cancel` returns a
+   `Cancellation` saying what happened to each letter.
 4. Register it in `providers/__init__.py`.
 5. Add tests that stub the transport, following `test_intelliprint.py`.
 

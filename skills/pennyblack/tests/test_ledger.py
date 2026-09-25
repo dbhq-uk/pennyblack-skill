@@ -145,6 +145,35 @@ class TestRead(unittest.TestCase):
             self.assertEqual(got[1]["id"], "print_third")
 
 
+class TestEvents(unittest.TestCase):
+    """Things that happen to a letter after send are appended as event lines.
+    The file stays append-only: a send line is never rewritten."""
+
+    def test_an_event_is_appended_after_the_send_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".pennyblack"
+            ledger.record(_entry(), log_dir=d)
+            first = (d / "sent.jsonl").read_text()
+            ledger.record_event({"event": "cancel", "id": _entry()["id"],
+                                 "letters": [{"id": "ltr_1", "status": "cancelled"}]},
+                                log_dir=d)
+            text = (d / "sent.jsonl").read_text()
+            self.assertTrue(text.startswith(first))
+            last = json.loads(text.strip().splitlines()[-1])
+            self.assertEqual(last["event"], "cancel")
+            self.assertIn("at", last)
+
+    def test_letters_and_events_are_told_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".pennyblack"
+            ledger.record(_entry(), log_dir=d)
+            ledger.record_event({"event": "cancel", "id": _entry()["id"], "letters": []},
+                                log_dir=d)
+            entries = ledger.read(d)
+            self.assertEqual(len(ledger.letters(entries)), 1)
+            self.assertEqual(len(ledger.events(entries, _entry()["id"])), 1)
+
+
 class TestContains(unittest.TestCase):
     def test_finds_a_recorded_job(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +181,14 @@ class TestContains(unittest.TestCase):
             ledger.record(_entry(), log_dir=d)
             self.assertTrue(ledger.contains(d, "print_9m4pV9SAmgzCpvqZsJ3OExvwVGA"))
             self.assertFalse(ledger.contains(d, "print_other"))
+
+    def test_a_later_event_is_not_a_send(self):
+        """A cancel line for a job must not make send think it was recorded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".pennyblack"
+            ledger.record_event({"event": "cancel", "id": "print_x", "letters": []},
+                                log_dir=d)
+            self.assertFalse(ledger.contains(d, "print_x"))
 
     def test_an_empty_record_holds_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

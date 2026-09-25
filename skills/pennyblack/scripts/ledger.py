@@ -35,7 +35,9 @@ This folder is the record of physical letters sent from this repository with
 [pennyblack](https://github.com/dbhq-uk/pennyblack-skill).
 
 - `sent.jsonl` - one line per letter: recipient, postage service, cost,
-  tracking number, and the date it was confirmed.
+  tracking number, and the date it was confirmed. Anything that happens to a
+  letter later, such as a cancel, is added as a new line with an `event` field.
+  No line is ever rewritten.
 - `*.pdf` - the exact document that was posted, captured at the moment of
   sending. The provider's own preview link expires within the hour, so this is
   the only durable copy of what actually went in the envelope.
@@ -131,13 +133,40 @@ def record(entry: dict, *, log_dir: Path, document: bytes = None) -> dict:
     return written
 
 
+def record_event(event: dict, *, log_dir: Path) -> Path:
+    """Append something that happened to a letter after it was sent.
+
+    `event` carries an "event" name and the print job "id". The time is added
+    here. The send line is never rewritten, so the file stays append-only and
+    a merge still resolves by keeping both sides.
+    """
+    ensure_dir(log_dir)
+    event = dict(event)
+    event.setdefault("at", int(datetime.now(tz=timezone.utc).timestamp()))
+    sent = log_dir / SENT_FILENAME
+    with sent.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
+    return sent
+
+
+def letters(entries: list) -> list:
+    """The send lines: one per letter posted. Event lines are left out."""
+    return [e for e in entries if "event" not in e]
+
+
+def events(entries: list, print_id: str) -> list:
+    """The event lines for one print job, oldest first."""
+    return [e for e in entries if "event" in e and e.get("id") == print_id]
+
+
 def contains(log_dir: Path, print_id: str) -> bool:
-    """True if the record already holds a line for this print job.
+    """True if the record already holds a send line for this print job.
 
     `send` checks this before recording a job it finds already confirmed, so
-    that a retry writes the missing line once and never a second copy.
+    that a retry writes the missing line once and never a second copy. Only
+    send lines count: a cancel line for the job does not mean it was recorded.
     """
-    return any(e.get("id") == print_id for e in read(log_dir))
+    return any(e.get("id") == print_id for e in letters(read(log_dir)))
 
 
 def read(log_dir: Path) -> list:
