@@ -43,8 +43,8 @@ jobs:
           fi
 
       - name: draft and send stay separate commands
-        # THE ONE CONSTRAINT THIS SKILL CANNOT LOSE. Physical post is not
-        # recallable and every send costs money, so there is deliberately no
+        # THE ONE CONSTRAINT THIS SKILL CANNOT LOSE. Physical post cannot be
+        # recalled once printed and every send costs money, so there is deliberately no
         # command that writes and posts in one go. Two unit tests already assert
         # it; this asserts that nobody adds a third verb that collapses them.
         run: |

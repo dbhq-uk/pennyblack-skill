@@ -8,6 +8,7 @@ all provider-neutral.
 
 from .base import (  # noqa: F401  (re-exported for callers)
     Address,
+    Cancellation,
     Cost,
     Draft,
     EVIDENCE_SERVICES,

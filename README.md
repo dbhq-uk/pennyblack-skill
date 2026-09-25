@@ -47,9 +47,14 @@ pennyblack send print_YheDXex1cHsyD9xosrgZu
 ## What makes it different
 
 **Drafting and sending are separate commands, and there is no one-shot option.**
-Physical post cannot be recalled and costs money every time. So the flow is:
-create the letter, get the real price and a PDF preview of the actual thing,
-show a human, wait. Only `send` spends anything.
+Physical post cannot be recalled once it is printed, and it costs money every
+time. So the flow is: create the letter, get the real price and a PDF preview of
+the actual thing, show a human, wait. Only `send` spends anything.
+
+**A mistake spotted just after `send` can often still be stopped.** Until
+printing starts, `cancel` recalls each letter still waiting to print, and the
+provider refunds it. It reports every letter, so you know which were stopped and
+which had already gone to print.
 
 **It tells you the truth about what you are buying.** For a court document
 served by post under CPR 6.26, Signed For proves no more than first class. Under
@@ -140,7 +145,7 @@ what you send.
 | `services` | list postage options and what each one actually proves |
 | `draft <file.pdf>` | upload and price a letter. Free. Nothing is printed |
 | `send <id>` | commit a draft. **This posts it and charges you** |
-| `cancel <id>` | throw away an unconfirmed draft |
+| `cancel <id>` | throw away a draft, or recall a sent letter that has not been printed yet |
 | `status <id>` | status, posting date and Royal Mail tracking number |
 | `log` | what this machine has posted, with costs and tracking numbers |
 
@@ -167,8 +172,9 @@ of sending or not at all. A tracking number proves something arrived; only the
 document proves what.
 
 `sent.jsonl` is append-only and one line per letter, so two sessions posting
-letters produce two lines and a merge conflict resolves by keeping both.
-`pennyblack log` renders it.
+letters produce two lines and a merge conflict resolves by keeping both. A
+later cancel is added as a new line, never by rewriting one. `pennyblack log`
+renders it.
 
 Use `--log-dir` to keep a particular client's letters with the rest of their
 correspondence instead.

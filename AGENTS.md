@@ -5,7 +5,9 @@ Read this before changing anything in this repository.
 ## What this is
 
 pennyblack posts physical letters in the UK. Running it spends real money and
-puts paper through Royal Mail to a real address. Neither is reversible.
+puts paper through Royal Mail to a real address. Once the letter is printed,
+neither is reversible. A sent letter can be recalled only in the short window
+before printing starts, so the tool treats `send` as final.
 
 That single fact governs every design decision here. If a change makes the tool
 more convenient at the cost of making an unintended letter more likely, the

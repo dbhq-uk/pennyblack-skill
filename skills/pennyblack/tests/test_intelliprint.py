@@ -225,6 +225,44 @@ class TestStatus(unittest.TestCase):
         self.assertIsNone(prov.status("prt_test123")[0].tracking_number)
 
 
+class TestCancel(unittest.TestCase):
+    """DELETE on an unconfirmed job deletes it. On a confirmed job it cancels
+    every letter still waiting to print, refunds those, and leaves the rest."""
+
+    def test_an_unconfirmed_draft_is_deleted_whole(self):
+        prov = StubbedIntelliprint({"api_key": "k"},
+                                   {"id": "prt_test123", "object": "print", "deleted": True})
+        result = prov.cancel("prt_test123")
+        self.assertEqual(prov.calls[0]["method"], "DELETE")
+        self.assertEqual(prov.calls[0]["path"], "/prints/prt_test123")
+        self.assertTrue(result.deleted)
+        self.assertEqual(result.letters, [])
+
+    def test_a_confirmed_job_reports_each_letter(self):
+        payload = _payload(confirmed=True, testmode=False)
+        payload["letters"] = [
+            {"id": "ltr_1", "status": "cancelled", "address": {"name": "Acme Ltd"},
+             "postage_service": "uk_first_class"},
+            {"id": "ltr_2", "status": "printing", "address": {"name": "Bloggs & Co"},
+             "postage_service": "uk_first_class"},
+        ]
+        result = StubbedIntelliprint({"api_key": "k"}, payload).cancel("prt_test123")
+        self.assertFalse(result.deleted)
+        self.assertEqual([(m.recipient, m.status) for m in result.letters],
+                         [("Acme Ltd", "cancelled"), ("Bloggs & Co", "printing")])
+        self.assertEqual(result.letters[0].service, "first")
+
+    def test_nothing_left_to_cancel_says_so(self):
+        """A 400 here is not an address problem, whatever the generic hint says."""
+        prov = StubbedIntelliprint({"api_key": "k"})
+        prov._request = lambda *a, **k: (_ for _ in ()).throw(
+            IntelliprintError("generic", status=400, body='{"error": {"message": "x"}}'))
+        with self.assertRaises(IntelliprintError) as ctx:
+            prov.cancel("prt_test123")
+        self.assertIn("waiting to print", str(ctx.exception))
+        self.assertNotIn("postcode", str(ctx.exception))
+
+
 class TestServiceVocabulary(unittest.TestCase):
     def test_every_pennyblack_service_maps_to_intelliprint(self):
         """If we advertise a service we cannot actually buy, the skill lies."""

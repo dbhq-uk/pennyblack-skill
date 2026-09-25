@@ -20,7 +20,8 @@ what they think it says.
 ## The rule that matters
 
 **Never post anything without showing the user first and getting an explicit
-"send it".** Physical post cannot be recalled, and it costs money every time.
+"send it".** Physical post cannot be recalled once it is printed, and it costs
+money every time.
 
 The tool is two steps so this is easy to honour:
 
@@ -73,7 +74,7 @@ inline render. Then wait.
 python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" send print_YheDXex1cHsyD9xosrgZu
 ```
 
-Or bin it with `cancel print_...`.
+Or bin the draft with `cancel print_...`. Nothing was printed or charged.
 
 **`send` is safe to run again.** If it fails partway, for example a timeout or a
 record that cannot be written, run the same `send` again. A job that is already
@@ -83,6 +84,25 @@ records it and says so; if it is already there, `send` changes nothing. With
 (where the record went). Tell the user if `captured` is false.
 
 Ids look like `print_YheDXex1cHsyD9xosrgZu`.
+
+## Recalling a sent letter
+
+A sent letter can still be stopped **until printing starts**. `cancel` on a
+confirmed job cancels every letter that is still waiting to print, and the
+provider refunds those. Anything already printing, or further on, carries on.
+Printing usually starts the same day for a job confirmed before 3pm, so the
+window can be a few hours.
+
+**Only with the user's say-so.** Never cancel a sent letter on your own
+initiative, even to fix a mistake you spotted. Tell the user and let them decide.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" cancel print_YheDXex1cHsyD9xosrgZu
+```
+
+`cancel` reports each letter: `cancelled` means it will not be printed, and any
+other status means it was too late. Pass the result on as it is. A cancel on a
+sent letter is added to the record.
 
 ## Choosing the postage
 

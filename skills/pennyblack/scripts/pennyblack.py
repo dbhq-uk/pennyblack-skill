@@ -11,7 +11,7 @@ The shape of this tool is a two-step on purpose:
              money and cannot be undone.
 
 There is no single command that writes a letter and posts it in one go, and
-that is not an oversight. Physical post cannot be recalled.
+that is not an oversight. Physical post cannot be recalled once it is printed.
 """
 
 import argparse
@@ -281,7 +281,7 @@ def cmd_send(args):
             print(f"  for {before.cost} by "
                   f"{SERVICES.get(before.service, {}).get('label', before.service)}.")
             if not before.testmode:
-                print("  Physical post cannot be recalled.")
+                print("  Once it is printed, it cannot be recalled.")
             print()
             try:
                 answer = input("  Type 'send' to confirm: ").strip().lower()
@@ -386,10 +386,64 @@ def cmd_status(args):
 
 
 def cmd_cancel(args):
+    """Throw away a draft, or recall a sent letter before it is printed.
+
+    Only letters still waiting to print can be stopped. The provider refunds
+    those, and anything already printing or later carries on, so the result is
+    reported letter by letter rather than as one "cancelled".
+    """
     conf = cfg.load()
     prov = providers.get(conf)
-    prov.cancel(args.id)
-    print(f"  cancelled {args.id}")
+    result = prov.cancel(args.id)
+    stopped = [m for m in result.letters if m.status == "cancelled"]
+
+    written, problem = None, None
+    if not result.deleted:
+        # A confirmed job was posted and is in the record, so what happened to
+        # it belongs there too. Appended, never rewritten.
+        log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
+        try:
+            written = ledger.record_event({
+                "event": "cancel",
+                "id": result.id or args.id,
+                "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
+                            for m in result.letters],
+            }, log_dir=log_dir)
+        except OSError as exc:
+            problem = f"the cancel went through, but the record could not be updated: {exc}"
+
+    if args.json:
+        _out({
+            "id": result.id or args.id,
+            "deleted": result.deleted,
+            "cancelled": len(stopped),
+            "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
+                        for m in result.letters],
+            "ledger": str(written) if written else None,
+        }, True)
+    elif result.deleted:
+        print()
+        print(f"  deleted    {args.id}")
+        print("             It was an unconfirmed draft. Nothing was printed or charged.")
+        print()
+    else:
+        print()
+        print(f"  {args.id}")
+        for m in result.letters:
+            who = m.recipient or m.id
+            if m.status == "cancelled":
+                print(f"    {who:<24} cancelled - it will not be printed, and it is refunded")
+            else:
+                print(f"    {who:<24} {m.status} - too late to cancel, it has gone to print")
+        print()
+        print(f"  {len(stopped)} of {len(result.letters)} letter(s) cancelled.")
+        if written:
+            print(f"  recorded   {written}")
+        print()
+
+    if problem:
+        fail(problem)
+    return result
 
 
 def cmd_log(args):
@@ -401,11 +455,12 @@ def cmd_log(args):
         print(f"  nothing posted from this repository yet ({log_dir}/sent.jsonl)")
         return
 
+    sent = ledger.letters(entries)
     print()
     print(f"  {log_dir}")
     print()
     total = 0
-    for e in entries[-args.limit:]:
+    for e in sent[-args.limit:]:
         mode = "  [test]" if e.get("testmode") else ""
         pence = e.get("cost_pence", 0)
         if not e.get("testmode"):
@@ -420,8 +475,13 @@ def cmd_log(args):
             print(f"    tracking {t}")
         if e.get("document"):
             print(f"    document {e['document']}")
+        for ev in ledger.events(entries, e.get("id")):
+            if ev.get("event") == "cancel":
+                n = sum(1 for ltr in ev.get("letters", []) if ltr.get("status") == "cancelled")
+                print(f"    cancelled {n} of {len(ev.get('letters', []))} letter(s)"
+                      f" on {_date(ev.get('at'))}")
         print()
-    print(f"  {len(entries)} letter(s) recorded, £{total / 100:.2f} spent live")
+    print(f"  {len(sent)} letter(s) recorded, £{total / 100:.2f} spent live")
     print()
 
 
@@ -492,8 +552,12 @@ def build_parser():
     s.add_argument("id")
     s.set_defaults(func=cmd_status)
 
-    s = sub.add_parser("cancel", parents=[common], help="throw away an unconfirmed draft")
+    s = sub.add_parser("cancel", parents=[common],
+                       help="throw away a draft, or recall a sent letter that has "
+                            "not been printed yet")
     s.add_argument("id")
+    s.add_argument("--log-dir", help="where the record lives "
+                   "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_cancel)
 
     s = sub.add_parser("log", parents=[common], help="what has been posted from this repository")
