@@ -63,6 +63,11 @@ def _money(obj: dict) -> Cost:
     )
 
 
+def _testmode(payload: dict):
+    """The job's test flag, or None if the payload does not carry one."""
+    return bool(payload["testmode"]) if "testmode" in payload else None
+
+
 def _flatten(data, parent="", out=None):
     """Encode nested dicts and lists as PHP-style bracket keys.
 
@@ -355,7 +360,8 @@ class Intelliprint(Provider):
         if payload.get("deleted"):
             return Cancellation(id=payload.get("id", draft_id), deleted=True, raw=payload)
         return Cancellation(id=payload.get("id", draft_id), deleted=False,
-                            letters=self._mailings(payload), raw=payload)
+                            letters=self._mailings(payload), raw=payload,
+                            testmode=_testmode(payload))
 
     def retrieve(self, print_id: str) -> dict:
         return self._request("GET", f"/prints/{print_id}")
@@ -382,6 +388,7 @@ class Intelliprint(Provider):
 
     def _mailings(self, payload: dict) -> list:
         out = []
+        testmode = _testmode(payload)
         for letter in payload.get("letters") or []:
             returned = letter.get("returned") or {}
             out.append(Mailing(
@@ -394,5 +401,6 @@ class Intelliprint(Provider):
                 returned_reason=returned.get("reason") or None,
                 returned_date=returned.get("date") or None,
                 raw=letter,
+                testmode=testmode,
             ))
         return out

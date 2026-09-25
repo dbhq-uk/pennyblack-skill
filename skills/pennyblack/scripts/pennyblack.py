@@ -49,6 +49,14 @@ def fail(message, code=1):
     raise SystemExit(code)
 
 
+def _mode(testmode, test_text, live_text):
+    """The LIVE or TEST line that heads a command's output, so nobody reads a
+    test as a letter that went. Nothing when the provider did not say."""
+    if testmode is None:
+        return
+    print(f"  {'TEST' if testmode else 'LIVE':<10} {test_text if testmode else live_text}")
+
+
 def _date(stamp):
     """A UNIX timestamp as a UK date, or an empty string if there is none."""
     when = ledger.uk_time(stamp)
@@ -154,6 +162,9 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
 
     meta = SERVICES.get(draft.service, {})
     print()
+    _mode(draft.testmode,
+          "a test draft - sending it posts nothing. A real letter needs --live.",
+          "a real draft - send posts it and charges the account")
     print(f"  draft      {draft.id}")
     if draft.addresses:
         first = "read from" if address_from_pdf else "to"
@@ -169,9 +180,7 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
     if envelope:
         print(f"  envelope   {envelope.upper()}")
     print(f"  pages      {draft.pages} on {draft.sheets} sheet(s)")
-    print(f"  cost       {draft.cost}")
-    if draft.testmode:
-        print("  mode       TEST - nothing will be printed or charged")
+    print(f"  cost       {draft.cost}" + (" - not charged, it is a test" if draft.testmode else ""))
     if preview_file:
         print(f"  preview    {preview_file}")
     elif draft.preview_url:
@@ -187,7 +196,8 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
     print("  window before anyone says \"send it\".")
     print()
     if draft.testmode:
-        print("  This is a test draft. Re-run with --live to create a real one.")
+        print("  This is a test draft. Do not show it to the user for approval:")
+        print("  sending it posts nothing. Draft it again with --live for a real letter.")
     else:
         print("  Nothing has been printed or charged yet. To post it:")
         print(f"    pennyblack send {draft.id}")
@@ -413,11 +423,12 @@ def cmd_send(args):
     log_dir = ledger.resolve_dir(args.log_dir, fallback=cfg.HOME)
 
     before = prov.retrieve_draft(args.id)
+    record_file = log_dir / ledger.filename(before.testmode)
     recovered = False
     if before.confirmed:
-        if ledger.contains(log_dir, args.id):
+        if ledger.contains(log_dir, args.id, testmode=before.testmode):
             fail(f"{args.id} was already confirmed, and it is already in the record "
-                 f"at {log_dir / ledger.SENT_FILENAME}. Nothing was posted this time.\n"
+                 f"at {record_file}. Nothing was posted this time.\n"
                  f"  Check it with: pennyblack status {args.id}")
         # Confirmed, but never recorded. This is what a confirm that timed out
         # after the provider processed it leaves behind. Record it now, so that
@@ -427,6 +438,8 @@ def cmd_send(args):
     else:
         if not args.yes and sys.stdin.isatty():
             where = ", ".join(before.recipients) or "the address on the draft"
+            if before.testmode:
+                print("\n  TEST draft - confirming it posts nothing and charges nothing.")
             print(f"\n  About to post {args.id} to {where}")
             print(f"  for {before.cost} by "
                   f"{SERVICES.get(before.service, {}).get('label', before.service)}.")
@@ -457,18 +470,23 @@ def cmd_send(args):
         written = ledger.record(entry, log_dir=log_dir, document=document)
     except OSError as exc:
         print(json.dumps(entry, sort_keys=True, ensure_ascii=False), file=sys.stderr)
-        fail(f"POSTED, BUT NOT RECORDED. {draft.id} was confirmed, but the record "
+        head = ("TEST - NOT POSTED, AND NOT RECORDED." if draft.testmode
+                else "POSTED, BUT NOT RECORDED.")
+        fail(f"{head} {draft.id} was confirmed, but the record "
              f"could not be written to {log_dir}: {exc}\n"
              f"  Fix that, then run: pennyblack send {draft.id}\n"
              "  It will find the letter already posted, record it, and not post it again.\n"
-             f"  Or add the line above to {log_dir / ledger.SENT_FILENAME} by hand.\n"
+             f"  Or add the line above to {record_file} by hand.\n"
              "  The copy of the document may not have been saved. Its preview link\n"
              "  expires within the hour:\n"
              f"  {draft.preview_url or '(none)'}")
 
     if args.json:
+        # `posted` is the field to read. A test send is confirmed and recorded,
+        # but nothing was printed, posted or charged.
         return _out(dict(
             entry,
+            posted=not draft.testmode,
             document=written["document"].name if written["document"] else None,
             ledger=str(written["sent"]),
             captured=bool(written["document"]),
@@ -476,17 +494,19 @@ def cmd_send(args):
         ), True)
 
     print()
-    if recovered:
-        print(f"  posted     {draft.id}, by an earlier send")
-        print("  note       It was missing from the record, so it has been recorded")
-        print("             now. It was not posted again.")
+    if draft.testmode:
+        print(f"  TEST - NOT POSTED  {draft.id}")
+        print("             It was a test draft. Nothing was printed, posted or charged.")
+        print("             For a real letter, draft it again with --live.")
     else:
-        print(f"  posted     {draft.id}")
+        print(f"  LIVE - POSTED  {draft.id}" + (", by an earlier send" if recovered else ""))
+    if recovered:
+        print("  note       It was missing from the record, so it has been recorded")
+        print("             now. It was not "
+              + ("confirmed again." if draft.testmode else "posted again."))
     print(f"  to         {', '.join(draft.recipients)}")
     print(f"  service    {SERVICES.get(draft.service, {}).get('label', draft.service)}")
-    print(f"  cost       {draft.cost}")
-    if draft.testmode:
-        print("  mode       TEST - nothing was actually printed or charged")
+    print(f"  cost       {draft.cost}" + (" - not charged" if draft.testmode else ""))
     if tracking:
         for t in tracking:
             print(f"  tracking   {t}")
@@ -497,6 +517,8 @@ def cmd_send(args):
     print(f"  recorded   {written['sent']}")
     if written["document"]:
         print(f"  document   {written['document'].name}")
+    elif draft.testmode:
+        print("  document   NOT captured - the preview link did not return a PDF.")
     else:
         print("  document   NOT captured - the preview link did not return a PDF.")
         print("             The letter went; the copy of it did not.")
@@ -514,7 +536,7 @@ def cmd_status(args):
 
     if args.json:
         return _out([dict(
-            _letter_state(m), service=m.service,
+            _letter_state(m), service=m.service, testmode=m.testmode,
             means=LETTER_STATUSES.get(m.status, {}).get("means", ""),
             final=m.status in FINAL_STATUSES,
         ) for m in mailings], True)
@@ -523,6 +545,8 @@ def cmd_status(args):
         print(f"  no mail items on {args.id}")
         return
     print()
+    _mode(mailings[0].testmode, "a test job - nothing is printed or posted",
+          "a real job")
     for m in mailings:
         meta = LETTER_STATUSES.get(m.status, {})
         print(f"  {m.recipient or m.id}")
@@ -574,7 +598,7 @@ def cmd_cancel(args):
                 "id": result.id or args.id,
                 "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
                             for m in result.letters],
-            }, log_dir=log_dir)
+            }, log_dir=log_dir, testmode=bool(result.testmode))
         except OSError as exc:
             problem = f"the cancel went through, but the record could not be updated: {exc}"
 
@@ -582,6 +606,7 @@ def cmd_cancel(args):
         _out({
             "id": result.id or args.id,
             "deleted": result.deleted,
+            "testmode": result.testmode,
             "cancelled": len(stopped),
             "letters": [{"id": m.id, "recipient": m.recipient, "status": m.status}
                         for m in result.letters],
@@ -594,6 +619,7 @@ def cmd_cancel(args):
         print()
     else:
         print()
+        _mode(result.testmode, "a test job - nothing was going to be posted", "a real job")
         print(f"  {args.id}")
         for m in result.letters:
             who = m.recipient or m.id
@@ -682,6 +708,9 @@ def cmd_log(args):
         print()
     if len(shown) < len(sent):
         print(f"  showing the last {len(shown)} of {len(sent)}. Use --limit to see more.")
+    tests = len(ledger.letters(ledger.read(log_dir, ledger.TEST_FILENAME)))
+    if tests:
+        print(f"  {tests} test send(s) in {ledger.TEST_FILENAME}, not shown - nothing was posted")
     print(f"  {len(sent)} letter(s) recorded, £{total / 100:.2f} spent live")
     if checked is not None:
         print(f"  checked {checked} job(s) that can still change with the provider")

@@ -35,12 +35,14 @@ pennyblack draft notice.pdf --name "Acme Ltd" \
   --line "1 High Street" --line "Leeds" --postcode "LS1 1AA" \
   --service signed --live
 
+#   LIVE       a real draft - send posts it and charges the account
 #   draft      print_YheDXex1cHsyD9xosrgZu
 #   to         Acme Ltd
 #              1 High Street
 #              Leeds
 #              LS1 1AA
 #   service    Royal Mail Signed For 1st Class
+#   envelope   C5
 #   pages      1 on 1 sheet(s)
 #   cost       £5.21 inc VAT (£4.34 + VAT)
 #   preview    /tmp/pennyblack-preview-.../print_YheDXex1cHsyD9xosrgZu.pdf
@@ -83,7 +85,12 @@ names. It gives postage facts, not legal advice.
 See [`references/postage.md`](skills/pennyblack/references/postage.md).
 
 **Test mode is the default.** Every draft is a test draft until you pass
-`--live`, so you can wire up and rehearse the whole thing for nothing.
+`--live`, so you can wire up and rehearse the whole thing for nothing. A test
+never reads as a real letter: the output of `draft`, `send`, `status` and
+`cancel` starts with `LIVE` or `TEST`, `send` on a test draft says
+`TEST - NOT POSTED` and returns
+`posted: false`, and test sends are kept in `test.jsonl`, apart from the
+letters that were posted.
 
 **No dependencies.** Standard library Python, 3.9 or newer. No virtualenv, no
 packages, no build step.
@@ -176,6 +183,7 @@ work where you can read, diff and grep it a year later.
 .pennyblack/
   sent.jsonl                             one line per letter, append-only
   2026-09-17-acme-ltd-DpEfeInS.pdf       the document that was actually posted
+  test.jsonl, test-*.pdf                 test sends, kept apart - nothing posted
   README.md                              warns it holds names and addresses
 ```
 

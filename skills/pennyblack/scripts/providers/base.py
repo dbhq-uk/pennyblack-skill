@@ -192,6 +192,9 @@ class Mailing:
     returned_reason: Optional[str] = None
     returned_date: Optional[int] = None
     raw: dict = field(default_factory=dict)
+    #: True for a letter in a test job, which is never printed or posted.
+    #: None when the provider did not say.
+    testmode: Optional[bool] = None
 
 
 @dataclass
@@ -207,6 +210,9 @@ class Cancellation:
     deleted: bool
     letters: list = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    #: True for a test job. None when the provider did not say, as for a
+    #: deleted draft.
+    testmode: Optional[bool] = None
 
 
 class Provider:
