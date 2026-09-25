@@ -145,6 +145,19 @@ class TestRead(unittest.TestCase):
             self.assertEqual(got[1]["id"], "print_third")
 
 
+class TestContains(unittest.TestCase):
+    def test_finds_a_recorded_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".pennyblack"
+            ledger.record(_entry(), log_dir=d)
+            self.assertTrue(ledger.contains(d, "print_9m4pV9SAmgzCpvqZsJ3OExvwVGA"))
+            self.assertFalse(ledger.contains(d, "print_other"))
+
+    def test_an_empty_record_holds_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(ledger.contains(Path(tmp) / ".pennyblack", "print_x"))
+
+
 class TestDocumentName(unittest.TestCase):
     def test_awkward_recipient_names_are_slugged(self):
         name = ledger.document_name(_entry(recipients=["O'Brien & Sons (Leeds) Ltd."]))

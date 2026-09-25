@@ -75,6 +75,13 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" send print_YheDXex1cHsyD9xos
 
 Or bin it with `cancel print_...`.
 
+**`send` is safe to run again.** If it fails partway, for example a timeout or a
+record that cannot be written, run the same `send` again. A job that is already
+confirmed is never confirmed twice: if it is missing from the record, `send`
+records it and says so; if it is already there, `send` changes nothing. With
+`--json`, `send` returns `captured` (was the PDF kept), `document` and `ledger`
+(where the record went). Tell the user if `captured` is false.
+
 Ids look like `print_YheDXex1cHsyD9xosrgZu`.
 
 ## Choosing the postage

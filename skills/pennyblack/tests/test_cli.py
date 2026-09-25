@@ -5,6 +5,7 @@ registered in providers.REGISTRY, so the real Intelliprint class is never built.
 """
 
 import contextlib
+import dataclasses
 import io
 import json
 import sys
@@ -18,23 +19,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import ledger  # noqa: E402
 import pennyblack  # noqa: E402
 import providers  # noqa: E402
-from providers.base import Mailing, Provider, SERVICES  # noqa: E402
+from providers.base import Cost, Draft, Mailing, Provider, SERVICES  # noqa: E402
+
+PDF = b"%PDF-1.7 stub letter"
+
+
+def _job(**over):
+    """One print job as the provider would report it."""
+    base = dict(
+        id="print_stub0001", provider="stub", cost=Cost(434, 87, 521),
+        pages=1, sheets=1, service="signed", testmode=False, confirmed=False,
+        recipients=["Acme Ltd"], preview_url="https://example.invalid/p.pdf",
+        raw={"confirmed_at": 1789641495, "reference": "ref-1",
+             "letters": [{"address": {"name": "Acme Ltd"}}]},
+    )
+    base.update(over)
+    return Draft(**base)
 
 
 class StubProvider(Provider):
-    """A provider with no network at all. Offers every service."""
+    """A provider with no network at all. Offers every service.
+
+    It holds one job. `confirm` flips it to confirmed, the way the real API
+    does, and every call is logged in `calls` so a test can assert what did
+    and did not happen.
+    """
 
     name = "stub"
     service_map = {s: s for s in SERVICES}
 
-    def __init__(self, config=None, *, mailings=None):
+    def __init__(self, config=None, *, mailings=None, job=None, document=PDF):
         super().__init__(config or {})
         self.mailings = mailings or []
+        self.job = job or _job()
+        self.document = document
         self.calls = []
+
+    def retrieve_draft(self, draft_id):
+        self.calls.append(("retrieve_draft", draft_id))
+        return dataclasses.replace(self.job)
+
+    def confirm(self, draft_id):
+        self.calls.append(("confirm", draft_id))
+        self.job = dataclasses.replace(self.job, confirmed=True)
+        return dataclasses.replace(self.job)
+
+    def fetch_document(self, draft):
+        self.calls.append(("fetch_document", draft.id))
+        return self.document
 
     def status(self, print_id):
         self.calls.append(("status", print_id))
         return self.mailings
+
+    def called(self, name):
+        return [c for c in self.calls if c[0] == name]
 
 
 @contextlib.contextmanager
@@ -136,6 +175,83 @@ class TestStatus(unittest.TestCase):
         with stub_provider(prov):
             _, out, _ = run(["status", "print_x"])
         self.assertNotIn("posted", out)
+
+
+class TestSend(unittest.TestCase):
+    """send is the step that spends money. After it, the letter has to end up
+    in the record, whatever else goes wrong."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def send(self, prov, *extra):
+        with stub_provider(prov):
+            return run(["send", prov.job.id, "--yes", "--log-dir", str(self.log_dir), *extra])
+
+    def test_confirms_then_records(self):
+        prov = StubProvider()
+        code, out, _ = self.send(prov)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        entries = ledger.read(self.log_dir)
+        self.assertEqual([e["id"] for e in entries], ["print_stub0001"])
+
+    def test_already_confirmed_but_unrecorded_is_recorded_now(self):
+        """A confirm that timed out after the provider processed it leaves a
+        posted letter with no record. A retry has to put that right."""
+        prov = StubProvider(job=_job(confirmed=True))
+        code, out, err = self.send(prov)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(prov.called("confirm"), [], "it must never confirm twice")
+        entries = ledger.read(self.log_dir)
+        self.assertEqual([e["id"] for e in entries], ["print_stub0001"])
+        self.assertIn("not posted again", out)
+
+    def test_already_confirmed_and_recorded_writes_nothing(self):
+        ledger.record({"id": "print_stub0001", "cost_pence": 521}, log_dir=self.log_dir)
+        before = (self.log_dir / "sent.jsonl").read_text()
+        prov = StubProvider(job=_job(confirmed=True))
+        code, _, err = self.send(prov)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(prov.called("confirm"), [])
+        self.assertEqual((self.log_dir / "sent.jsonl").read_text(), before)
+        self.assertIn("already in the record", err)
+
+    def test_a_record_that_cannot_be_written_is_not_a_traceback(self):
+        """The money is spent by then. The user needs the entry, not a stack."""
+        prov = StubProvider()
+        with mock.patch.object(pennyblack.ledger, "record",
+                               side_effect=OSError(28, "No space left on device")):
+            code, out, err = self.send(prov)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("POSTED", err)
+        self.assertIn("No space left on device", err)
+        line = next(ln for ln in err.splitlines() if ln.startswith("{"))
+        self.assertEqual(json.loads(line)["id"], "print_stub0001")
+
+    def test_json_says_where_the_record_went_and_what_was_captured(self):
+        code, out, _ = self.send(StubProvider(), "--json")
+        self.assertEqual(code, 0)
+        got = json.loads(out)
+        self.assertIs(got["captured"], True)
+        self.assertTrue(got["document"].endswith(".pdf"))
+        self.assertTrue((self.log_dir / got["document"]).exists())
+        self.assertEqual(got["ledger"], str(self.log_dir / "sent.jsonl"))
+        self.assertIs(got["recovered"], False)
+
+    def test_json_says_when_the_document_was_not_captured(self):
+        code, out, _ = self.send(StubProvider(document=None), "--json")
+        self.assertEqual(code, 0)
+        got = json.loads(out)
+        self.assertIs(got["captured"], False)
+        self.assertIsNone(got["document"])
+        self.assertEqual(got["ledger"], str(self.log_dir / "sent.jsonl"))
 
 
 if __name__ == "__main__":
