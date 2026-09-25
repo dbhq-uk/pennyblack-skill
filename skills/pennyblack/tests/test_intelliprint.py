@@ -28,18 +28,25 @@ class TestMoney(unittest.TestCase):
     expensive in live mode.
     """
 
+    # The rate card prices are EXCLUDING VAT (references/postage.md), so they
+    # go in `amount`. The VAT and the total are worked out at 20% to make a
+    # whole fixture; only the ex VAT figure comes from the rate card.
+
     def test_real_rate_card_values(self):
-        # Intelliprint's published 2nd class Signed price is £3.51.
-        cost = _money({"amount": 292_500_000, "tax": 58_500_000,
-                       "after_tax": 351_000_000, "currency": "GBP"})
-        self.assertEqual(cost.total_pence, 351)
-        self.assertEqual(cost.amount_pence, 292)
+        # Signed For 2nd Class is £3.51 ex VAT on the published rate card.
+        cost = _money({"amount": 351_000_000, "tax": 70_200_000,
+                       "after_tax": 421_200_000, "currency": "GBP"})
+        self.assertEqual(cost.amount_pence, 351)
+        self.assertEqual(cost.tax_pence, 70)
+        self.assertEqual(cost.total_pence, 421)
         self.assertEqual(cost.currency, "GBP")
 
     def test_second_class(self):
-        cost = _money({"amount": 70_000_000, "tax": 14_000_000,
-                       "after_tax": 84_000_000})
-        self.assertEqual(cost.total_pence, 84)
+        # 2nd Class is £0.84 ex VAT on the published rate card.
+        cost = _money({"amount": 84_000_000, "tax": 16_800_000,
+                       "after_tax": 100_800_000})
+        self.assertEqual(cost.amount_pence, 84)
+        self.assertEqual(cost.total_pence, 101)
 
     def test_divisor_is_ten_to_the_eight(self):
         self.assertEqual(COST_DIVISOR, 10 ** 8)
@@ -49,14 +56,17 @@ class TestMoney(unittest.TestCase):
         self.assertEqual(_money({}).total_pence, 0)
 
     def test_rounds_rather_than_truncates(self):
-        # 1.005 pounds -> 100.5 pence -> 100 or 101, never 0
-        cost = _money({"after_tax": 100_500_000})
-        self.assertIn(cost.total_pence, (100, 101))
+        # £1.006 is 100.6 pence. Rounding gives 101 and truncating gives 100,
+        # so this fails against a floor division or an int().
+        self.assertEqual(_money({"after_tax": 100_600_000}).total_pence, 101)
+        # And 100.4 pence is 100, so it does not always round up either.
+        self.assertEqual(_money({"after_tax": 100_400_000}).total_pence, 100)
 
     def test_formats_as_sterling(self):
-        cost = _money({"amount": 362_000_000, "tax": 72_000_000,
-                       "after_tax": 434_000_000, "currency": "GBP"})
-        self.assertIn("£4.34", str(cost))
+        # Signed For 1st Class is £4.34 ex VAT on the published rate card.
+        cost = _money({"amount": 434_000_000, "tax": 86_800_000,
+                       "after_tax": 520_800_000, "currency": "GBP"})
+        self.assertEqual(str(cost), "£5.21 inc VAT (£4.34 + VAT)")
 
 
 class TestFlatten(unittest.TestCase):
@@ -110,8 +120,9 @@ def _payload(**over):
         "confirmed": False,
         "pages": 1,
         "sheets": 1,
-        "cost": {"amount": 362_000_000, "tax": 72_000_000,
-                 "after_tax": 434_000_000, "currency": "GBP"},
+        # Signed For 1st Class: £4.34 ex VAT, £5.21 with it.
+        "cost": {"amount": 434_000_000, "tax": 86_800_000,
+                 "after_tax": 520_800_000, "currency": "GBP"},
         "postage": {"service": "uk_first_class_signed_for"},
         "letters": [{
             "id": "ltr_1",
@@ -163,7 +174,8 @@ class TestDraft(unittest.TestCase):
 
     def test_cost_is_converted(self):
         draft = self.prov.draft(source="x", recipients=self.addr, service="signed")
-        self.assertEqual(draft.cost.total_pence, 434)
+        self.assertEqual(draft.cost.amount_pence, 434)
+        self.assertEqual(draft.cost.total_pence, 521)
 
     def test_missing_pdf_file_is_caught_before_the_api_call(self):
         with self.assertRaises(IntelliprintError):
@@ -269,7 +281,7 @@ class TestRetrieveDraft(unittest.TestCase):
     def test_carries_cost_and_recipients_for_the_prompt(self):
         prov = StubbedIntelliprint({"api_key": "k"}, _payload())
         draft = prov.retrieve_draft("prt_test123")
-        self.assertEqual(draft.cost.total_pence, 434)
+        self.assertEqual(draft.cost.total_pence, 521)
         self.assertEqual(draft.recipients, ["Acme Ltd"])
 
     def test_is_on_the_neutral_interface(self):

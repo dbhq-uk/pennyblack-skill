@@ -25,9 +25,14 @@ specific job by id, and that is the only thing that spends money.
 Do not add a `--send-now`, a `--yes` on `draft`, or any other shortcut that
 collapses the two. The gap between them is where a human looks at the letter.
 
-`test_draft_is_never_confirmed` and `test_draft_defaults_to_test_mode` exist to
-catch this. If you find yourself editing those tests to make a change pass, stop
-and reconsider the change.
+`TestDraftSendRail` in `tests/test_cli.py` holds this at the command line an
+agent runs. It drives `pennyblack.main()` against a stub provider and against the
+real Intelliprint class with its network cut out. It fails if `draft` asks for a
+confirmed job, calls `confirm`, runs live without `--live`, gains a confirm-style
+option, or if a new subcommand appears. `test_draft_is_never_confirmed` and
+`test_draft_defaults_to_test_mode` hold the same rule one layer down, in the
+provider. If you find yourself editing any of these tests to make a change pass,
+stop and reconsider the change.
 
 ## Other invariants
 

@@ -105,16 +105,54 @@ class StubProvider(Provider):
 
 
 @contextlib.contextmanager
-def stub_provider(prov):
+def stub_provider(prov, name="stub"):
     """Make every command use `prov`.
 
     The registry is cleared first, so the real Intelliprint class cannot be
     built by accident, and the config is faked so no key file is read.
     """
-    with mock.patch.dict(providers.REGISTRY, {"stub": lambda config: prov}, clear=True), \
+    with mock.patch.dict(providers.REGISTRY, {name: lambda config: prov}, clear=True), \
             mock.patch.object(pennyblack.cfg, "load",
-                              return_value={"provider": "stub", "api_key": "k"}):
+                              return_value={"provider": name, "api_key": "k"}):
         yield prov
+
+
+class OfflineIntelliprint(providers.Intelliprint):
+    """The real Intelliprint class with the network cut out.
+
+    Everything from the command line down to the fields of the HTTP request is
+    the shipped code. Only `_request` and `fetch_document` are replaced. Each
+    request is kept, and answered the way the API answers a new job: it echoes
+    back the test and confirmed flags it was sent.
+    """
+
+    def __init__(self, config=None):
+        super().__init__(config or {"api_key": "k"})
+        self.requests = []
+
+    def _request(self, method, path, *, fields=None, file_path=None, query=None):
+        self.requests.append((method, path, fields))
+        fields = fields or {}
+        return {
+            "id": "prt_offline1", "testmode": fields.get("testmode"),
+            "confirmed": fields.get("confirmed"), "pages": 1, "sheets": 1,
+            "cost": {"amount": 434_000_000, "tax": 86_800_000,
+                     "after_tax": 520_800_000, "currency": "GBP"},
+            "postage": fields.get("postage") or {},
+            "letters": [{"id": "ltr_1", "status": "draft",
+                         "address": {"name": "Acme Ltd", "line": "1 High Street\nLeeds",
+                                     "postcode": "LS1 1AA", "country": "GB"},
+                         "pdf": "https://example.invalid/p.pdf"}],
+        }
+
+    def fetch_document(self, draft):
+        return PDF
+
+
+def no_network():
+    """Fail loudly if anything tries to open a URL."""
+    return mock.patch("urllib.request.urlopen",
+                      side_effect=AssertionError("a test tried to reach the network"))
 
 
 #: A value for each option a subcommand requires.
@@ -415,13 +453,74 @@ class TestSend(unittest.TestCase):
         with stub_provider(prov):
             return run(["send", prov.job.id, "--yes", "--log-dir", str(self.log_dir), *extra])
 
+    def at_a_terminal(self, prov, answer):
+        """Run send without --yes, at a terminal, and answer its prompt."""
+        tty = mock.Mock()
+        tty.isatty.return_value = True
+        with stub_provider(prov), mock.patch.object(pennyblack.sys, "stdin", tty), \
+                mock.patch("builtins.input", side_effect=answer) as prompt:
+            code, out, err = run(["send", prov.job.id, "--log-dir", str(self.log_dir)])
+        self.assertEqual(prompt.call_count, 1, "send did not ask")
+        return code, out, err
+
     def test_confirms_then_records(self):
         prov = StubProvider()
-        code, out, _ = self.send(prov)
-        self.assertEqual(code, 0)
+        seen = []
+        record = ledger.record
+
+        def recording(entry, **kwargs):
+            seen.append([name for name, *_ in prov.calls])
+            return record(entry, **kwargs)
+
+        with mock.patch.object(pennyblack.ledger, "record", side_effect=recording):
+            code, out, err = self.send(prov)
+        self.assertEqual(code, 0, err)
         self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertIn("confirm", seen[0], "the record was written before the confirm")
         entries = ledger.read(self.log_dir)
         self.assertEqual([e["id"] for e in entries], ["print_stub0001"])
+        entry = entries[0]
+        self.assertEqual(entry["recipients"], ["Acme Ltd"])
+        self.assertEqual(entry["service"], "signed")
+        self.assertEqual(entry["cost_pence"], 521)
+        self.assertIs(entry["testmode"], False)
+
+    def test_a_confirm_that_fails_records_nothing(self):
+        prov = StubProvider()
+        prov.confirm = mock.Mock(side_effect=providers.IntelliprintError(
+            "Intelliprint returned HTTP 500."))
+        code, _, err = self.send(prov)
+        self.assertNotEqual(code, 0)
+        self.assertIn("HTTP 500", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(ledger.read(self.log_dir), [])
+
+    def test_at_a_terminal_anything_but_send_posts_nothing(self):
+        for answer in (["no"], [""], ["yes"], ["y"]):
+            with self.subTest(answer=answer):
+                prov = StubProvider()
+                code, _, err = self.at_a_terminal(prov, answer)
+                self.assertNotEqual(code, 0)
+                self.assertIn("nothing was posted", err)
+                self.assertEqual(prov.called("confirm"), [])
+                self.assertEqual(ledger.read(self.log_dir), [])
+
+    def test_at_a_terminal_no_answer_posts_nothing(self):
+        for interrupt in (EOFError, KeyboardInterrupt):
+            with self.subTest(interrupt=interrupt.__name__):
+                prov = StubProvider()
+                code, _, err = self.at_a_terminal(prov, interrupt)
+                self.assertNotEqual(code, 0)
+                self.assertIn("cancelled", err)
+                self.assertEqual(prov.called("confirm"), [])
+                self.assertEqual(ledger.read(self.log_dir), [])
+
+    def test_at_a_terminal_send_confirms(self):
+        prov = StubProvider()
+        code, out, err = self.at_a_terminal(prov, ["send"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(prov.called("confirm")), 1)
+        self.assertEqual([e["id"] for e in ledger.read(self.log_dir)], ["print_stub0001"])
 
     def test_already_confirmed_but_unrecorded_is_recorded_now(self):
         """A confirm that timed out after the provider processed it leaves a
@@ -782,6 +881,132 @@ class TestAddressFromPdf(_DraftCase):
         self.assertNotEqual(code, 0)
         self.assertIn("one or the other", err)
         self.assertEqual(prov.called("draft"), [])
+
+
+def _options(command):
+    """Every option string one subcommand accepts."""
+    parser = pennyblack.build_parser()
+    sub = next(a for a in parser._actions
+               if a.__class__.__name__ == "_SubParsersAction")
+    return {s for a in sub.choices[command]._actions for s in a.option_strings}
+
+
+class TestDraftSendRail(_DraftCase):
+    """THE RULE THIS SKILL CANNOT LOSE, held at the command line an agent runs.
+
+    `draft` creates an unconfirmed job, in test mode unless --live is given.
+    `send` is the only command that confirms anything. The provider tests in
+    test_intelliprint.py hold the same rule one layer down, but a change to
+    cmd_draft or to the parser would get past them. These would fail.
+
+    If one of these fails, the change is wrong. Do not edit the test to pass.
+    """
+
+    #: Everything cmd_draft hands to the provider. A new argument here, such
+    #: as a `confirmed=True`, fails the test until someone has looked at it.
+    DRAFT_ARGUMENTS = {
+        "source", "recipients", "service", "reference", "testmode", "envelope",
+        "double_sided", "black_and_white", "confidential", "background_first",
+        "background_other", "address_from_pdf",
+    }
+
+    #: Every option `draft` takes. None of them confirms or posts anything.
+    DRAFT_OPTIONS = {
+        "-h", "--help", "--json", "--service", "--name", "--line", "--postcode",
+        "--country", "--to-file", "--max-recipients", "--address-from-pdf",
+        "--reference", "--envelope", "--single-sided", "--black-and-white",
+        "--confidential", "--background-first", "--background-other", "--live",
+    }
+
+    #: What a shortcut from draft to posted would be called.
+    CONFIRM_STYLE = {
+        "-y", "--yes", "--confirm", "--confirmed", "--send", "--send-now", "--post",
+        "--post-now", "--commit", "--force", "--no-prompt", "--now",
+    }
+
+    def offline_draft(self, *extra):
+        """Draft through the real Intelliprint class, with no network."""
+        prov = OfflineIntelliprint()
+        with no_network(), stub_provider(prov, name="intelliprint"):
+            code, out, err = run(["draft", str(self.pdf), "--service", "signed",
+                                  *self.ADDRESS, *extra])
+        return prov, code, out, err
+
+    def test_the_commands_are_exactly_these(self):
+        """A new command could post in one step. It has to be looked at."""
+        self.assertEqual(
+            set(_subcommands()),
+            {"setup", "services", "draft", "send", "status", "cancel", "log"},
+        )
+
+    def test_draft_takes_exactly_these_options(self):
+        self.assertEqual(_options("draft"), self.DRAFT_OPTIONS)
+
+    def test_draft_has_no_confirm_style_option(self):
+        self.assertEqual(_options("draft") & self.CONFIRM_STYLE, set())
+
+    def test_draft_never_confirms(self):
+        for extra in ([], ["--live"]):
+            with self.subTest(extra=extra):
+                prov, code, _, err = self.draft(None, *extra)
+                self.assertEqual(code, 0, err)
+                self.assertEqual([name for name, *_ in prov.calls],
+                                 ["draft", "fetch_document"])
+                self.assertEqual(set(prov.called("draft")[0][1]), self.DRAFT_ARGUMENTS)
+                self.assertIs(prov.job.confirmed, False)
+
+    def test_draft_is_a_test_unless_live_is_given(self):
+        prov, _, _, _ = self.draft()
+        self.assertIs(prov.called("draft")[0][1]["testmode"], True)
+        prov, _, _, _ = self.draft(None, "--live")
+        self.assertIs(prov.called("draft")[0][1]["testmode"], False)
+
+    def test_intelliprint_is_asked_for_an_unconfirmed_job(self):
+        """One request, to create the job, and it says confirmed=false."""
+        for extra in ([], ["--live"]):
+            with self.subTest(extra=extra):
+                prov, code, _, err = self.offline_draft(*extra)
+                self.assertEqual(code, 0, err)
+                self.assertEqual([(method, path) for method, path, _ in prov.requests],
+                                 [("POST", "/prints")])
+                self.assertIs(prov.requests[0][2]["confirmed"], False)
+
+    def test_intelliprint_is_asked_for_a_test_unless_live_is_given(self):
+        prov, code, out, err = self.offline_draft()
+        self.assertEqual(code, 0, err)
+        self.assertIs(prov.requests[0][2]["testmode"], True)
+        self.assertTrue(next(ln for ln in out.splitlines() if ln.strip()).strip()
+                        .startswith("TEST"))
+        prov, _, out, _ = self.offline_draft("--live")
+        self.assertIs(prov.requests[0][2]["testmode"], False)
+        self.assertTrue(next(ln for ln in out.splitlines() if ln.strip()).strip()
+                        .startswith("LIVE"))
+
+    def test_no_command_but_send_confirms(self):
+        log_dir = str(self.tmp / ".pennyblack")
+        ledger.record({"id": "print_stub0001", "service": "first", "cost_pence": 233,
+                       "recipients": ["Acme Ltd"], "testmode": False,
+                       "confirmed_at": int(time.time())}, log_dir=Path(log_dir))
+        commands = {
+            "setup": ["setup", "--api-key", "k"],
+            "services": ["services"],
+            "draft": ["draft", str(self.pdf), "--service", "first", *self.ADDRESS, "--live"],
+            "status": ["status", "print_stub0001", "--log-dir", log_dir],
+            "cancel": ["cancel", "print_stub0001", "--log-dir", log_dir],
+            "log": ["log", "--refresh", "--log-dir", log_dir],
+        }
+        self.assertEqual(set(commands) | {"send"}, set(_subcommands()))
+        for name, argv in commands.items():
+            with self.subTest(command=name):
+                prov = StubProvider(mailings=[_mailing()],
+                                    cancellation=Cancellation(id="print_stub0001",
+                                                              deleted=True))
+                with stub_provider(prov), \
+                        mock.patch.object(pennyblack.cfg, "save",
+                                          return_value=self.tmp / "config.json"):
+                    code, _, err = run(argv)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(prov.called("confirm"), [])
 
 
 class TestTestSends(unittest.TestCase):
