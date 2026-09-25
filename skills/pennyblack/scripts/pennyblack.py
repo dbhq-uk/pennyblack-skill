@@ -30,7 +30,7 @@ import config as cfg  # noqa: E402
 import ledger  # noqa: E402
 import providers  # noqa: E402
 from providers.base import (  # noqa: E402
-    Address, EVIDENCE_SERVICES, FINAL_STATUSES, LETTER_STATUSES, SERVICES,
+    Address, ENVELOPES, EVIDENCE_SERVICES, FINAL_STATUSES, LETTER_STATUSES, SERVICES,
 )
 
 
@@ -131,13 +131,14 @@ def _save_preview(prov, draft):
 
 
 def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
-                    address_from_pdf=False):
+                    address_from_pdf=False, envelope=None):
     if as_json:
         return _out({
             "id": draft.id,
             "provider": draft.provider,
             "service": draft.service,
             "service_label": SERVICES.get(draft.service, {}).get("label", draft.service),
+            "envelope": envelope,
             "testmode": draft.testmode,
             "pages": draft.pages,
             "sheets": draft.sheets,
@@ -165,6 +166,8 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
     else:
         print(f"  to         {', '.join(draft.recipients) or '(none)'}")
     print(f"  service    {meta.get('label', draft.service)}")
+    if envelope:
+        print(f"  envelope   {envelope.upper()}")
     print(f"  pages      {draft.pages} on {draft.sheets} sheet(s)")
     print(f"  cost       {draft.cost}")
     if draft.testmode:
@@ -341,6 +344,9 @@ def cmd_draft(args):
         fail(f"unknown service '{args.service}'. Try: pennyblack services")
     if not prov.supports(args.service):
         fail(f"{prov.name} does not offer '{args.service}'. Try: pennyblack services")
+    # Refused here rather than moved to another envelope: the user asked for
+    # this one, and a different envelope is a different price.
+    envelope = prov.envelope_for(args.service, args.envelope)
 
     source, data = _read_source(args)
     recipients = _parse_recipient(args)
@@ -352,7 +358,7 @@ def cmd_draft(args):
         service=args.service,
         reference=args.reference,
         testmode=not args.live,
-        envelope=args.envelope,
+        envelope=envelope,
         double_sided=not args.single_sided,
         black_and_white=args.black_and_white,
         confidential=args.confidential,
@@ -361,7 +367,7 @@ def cmd_draft(args):
         address_from_pdf=args.address_from_pdf,
     )
 
-    warnings += checks.sheet_warnings(draft.sheets_per_letter, args.envelope,
+    warnings += checks.sheet_warnings(draft.sheets_per_letter, envelope,
                                       prov.envelope_capacity)
     if args.address_from_pdf:
         if not any(_address_lines(a)[1:] for a in draft.addresses):
@@ -375,7 +381,8 @@ def cmd_draft(args):
 
     preview_file = _save_preview(prov, draft)
     return _describe_draft(draft, args.json, preview_file=preview_file,
-                           warnings=warnings, address_from_pdf=args.address_from_pdf)
+                           warnings=warnings, address_from_pdf=args.address_from_pdf,
+                           envelope=envelope)
 
 
 def _send_entry(draft):
@@ -684,8 +691,18 @@ def cmd_log(args):
 # --------------------------------------------------------------------------
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, with a pointer to the list when --service is missing."""
+
+    def error(self, message):
+        if "--service" in message:
+            message += ("\n  There is no default. Ask the user which service, then pass it."
+                        "\n  The options, and what each one proves: pennyblack services")
+        super().error(message)
+
+
 def build_parser():
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="pennyblack",
         description="Send a physical letter in the UK.",
         epilog="Drafts cost nothing. 'send' is the step that spends money.",
@@ -716,8 +733,9 @@ def build_parser():
 
     s = sub.add_parser("draft", parents=[common], help="create and price a letter without sending it")
     s.add_argument("source", help="the PDF to post")
-    s.add_argument("--service", default="second",
-                   help="postage service (default: second). See: pennyblack services")
+    s.add_argument("--service", required=True,
+                   help="postage service - required, there is no default. "
+                        "See: pennyblack services")
     s.add_argument("--name", help="recipient name")
     s.add_argument("--line", action="append",
                    help="one address line, without the postcode - repeat for each line, "
@@ -729,7 +747,9 @@ def build_parser():
                    help="give no recipient, and let the provider read the address "
                         "from the envelope window on page 1 of the PDF")
     s.add_argument("--reference", help="your own label for this job, shown in the dashboard")
-    s.add_argument("--envelope", default="c5", choices=["c4", "c5", "c4_plus", "a4_box"])
+    s.add_argument("--envelope", choices=ENVELOPES,
+                   help="envelope size (default: c5, or c4 for tracked-24 and "
+                        "tracked-48, which cannot use c5)")
     s.add_argument("--single-sided", action="store_true", help="print one side per sheet")
     s.add_argument("--black-and-white", action="store_true")
     s.add_argument("--confidential", action="store_true",

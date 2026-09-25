@@ -54,6 +54,7 @@ class StubProvider(Provider):
     name = "stub"
     service_map = {s: s for s in SERVICES}
     envelope_capacity = {"c5": 15, "c4": 50}
+    envelope_excludes = {"tracked-24": {"c5"}, "tracked-48": {"c5"}}
 
     def __init__(self, config=None, *, mailings=None, job=None, document=PDF,
                  cancellation=None):
@@ -116,16 +117,25 @@ def stub_provider(prov):
         yield prov
 
 
+#: A value for each option a subcommand requires.
+REQUIRED_VALUES = {"service": "first"}
+
+
 def _subcommands():
-    """Every subcommand the parser knows, with a dummy for each positional."""
+    """Every subcommand the parser knows, with a dummy for each positional
+    and for each option it requires."""
     parser = pennyblack.build_parser()
     sub = next(a for a in parser._actions
                if a.__class__.__name__ == "_SubParsersAction")
     out = {}
     for name, subparser in sub.choices.items():
-        positionals = [a for a in subparser._actions
-                       if not a.option_strings and a.dest != "help"]
-        out[name] = ["x.pdf" if a.dest == "source" else "print_x" for a in positionals]
+        args = []
+        for a in subparser._actions:
+            if not a.option_strings and a.dest != "help":
+                args.append("x.pdf" if a.dest == "source" else "print_x")
+            elif a.option_strings and a.required:
+                args += [a.option_strings[0], REQUIRED_VALUES[a.dest]]
+        out[name] = args
     return out
 
 
@@ -577,6 +587,69 @@ class TestDraftChecks(_DraftCase):
         prov = StubProvider(job=_job(sheets=15, sheets_per_letter=15))
         _, _, out, _ = self.draft(prov)
         self.assertNotIn("WARNING", out)
+
+
+class TestService(_DraftCase):
+    """draft used to pick 2nd class when --service was left out, while
+    SKILL.md told the agent never to pick silently."""
+
+    def test_draft_without_service_exits_non_zero(self):
+        with self.assertRaises(SystemExit) as ctx, \
+                contextlib.redirect_stderr(io.StringIO()):
+            pennyblack.build_parser().parse_args(["draft", "x.pdf"])
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_the_error_points_at_the_list(self):
+        prov = StubProvider()
+        with stub_provider(prov):
+            code, _, err = run(["draft", str(self.pdf), *self.ADDRESS])
+        self.assertNotEqual(code, 0)
+        self.assertIn("--service", err)
+        self.assertIn("pennyblack services", err)
+        self.assertEqual(prov.called("draft"), [])
+
+    def test_the_help_names_no_default_service(self):
+        parser = pennyblack.build_parser()
+        sub = next(a for a in parser._actions
+                   if a.__class__.__name__ == "_SubParsersAction")
+        action = next(a for a in sub.choices["draft"]._actions if a.dest == "service")
+        self.assertIsNone(action.default)
+        self.assertTrue(action.required)
+        self.assertNotIn("default:", action.help)
+
+
+class TestEnvelope(_DraftCase):
+    """Tracked 24 and 48 cannot go in a C5 envelope."""
+
+    def envelope_sent(self, service, *extra):
+        prov = StubProvider()
+        with stub_provider(prov):
+            code, out, err = run(["draft", str(self.pdf), "--service", service,
+                                  *self.ADDRESS, *extra])
+        return prov, code, out, err
+
+    def test_a_tracked_service_with_no_envelope_does_not_ask_for_c5(self):
+        for service in ("tracked-24", "tracked-48"):
+            with self.subTest(service=service):
+                prov, code, out, err = self.envelope_sent(service)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(prov.called("draft")[0][1]["envelope"], "c4")
+                self.assertRegex(out, r"envelope\s+C4")
+
+    def test_a_tracked_service_in_c5_is_refused(self):
+        prov, code, _, err = self.envelope_sent("tracked-24", "--envelope", "c5")
+        self.assertNotEqual(code, 0)
+        self.assertIn("cannot go in a C5", err)
+        self.assertEqual(prov.called("draft"), [])
+
+    def test_other_services_still_default_to_c5(self):
+        prov, code, _, _ = self.envelope_sent("signed")
+        self.assertEqual(code, 0)
+        self.assertEqual(prov.called("draft")[0][1]["envelope"], "c5")
+
+    def test_an_envelope_given_is_used(self):
+        prov, _, _, _ = self.envelope_sent("tracked-48", "--envelope", "c4_plus")
+        self.assertEqual(prov.called("draft")[0][1]["envelope"], "c4_plus")
 
 
 class TestAddressFromPdf(_DraftCase):

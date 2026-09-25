@@ -137,7 +137,8 @@ sent letter is added to the record.
 
 **Ask the user which service. One question, then wait.** Do not pick silently -
 the cheapest and dearest differ by more than a factor of ten, and the expensive
-ones are often bought for the wrong reason.
+ones are often bought for the wrong reason. `draft` has no default service and
+will not run without `--service`.
 
 Run `python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" services` for the list.
 The short version, for one A4 sheet, **excluding VAT**:
@@ -228,8 +229,10 @@ public one. The README written into the folder says so and gives the
 
 ## Useful flags
 
-- `--service` - see above. Default `second`.
+- `--service` - required, with no default. See above.
 - `--envelope c5|c4|c4_plus|a4_box` - default `c5`, which holds 15 sheets folded.
+  `tracked-24` and `tracked-48` cannot use C5, so they default to `c4`, and
+  `--envelope c5` with either of them is refused.
 - `--single-sided` - default is double-sided, which is cheaper.
 - `--black-and-white` - colour is standard and included; this is for preference.
 - `--confidential` - hides the contents from other users of the account dashboard.

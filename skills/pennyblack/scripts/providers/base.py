@@ -122,6 +122,10 @@ LETTER_STATUSES = {
 
 FINAL_STATUSES = {name for name, meta in LETTER_STATUSES.items() if meta["final"]}
 
+#: Envelope sizes, smallest first. When a service cannot use the smallest, the
+#: next one it can use is picked.
+ENVELOPES = ("c5", "c4", "c4_plus", "a4_box")
+
 
 @dataclass
 class Address:
@@ -222,12 +226,30 @@ class Provider:
     #: How many sheets each envelope size holds. A letter with more sheets
     #: than its envelope holds is moved to a bigger one, and `draft` warns.
     envelope_capacity: dict = {}
+    #: Envelopes a service cannot use, by pennyblack service name.
+    envelope_excludes: dict = {}
 
     def __init__(self, config: dict):
         self.config = config
 
     def supports(self, service: str) -> bool:
         return service in self.service_map
+
+    def envelope_for(self, service: str, envelope: Optional[str] = None) -> str:
+        """The envelope to ask for: the one given, or else the smallest this
+        service can use. A service that cannot use the one given is refused,
+        never quietly moved to another envelope."""
+        barred = self.envelope_excludes.get(service, ())
+        allowed = [e for e in ENVELOPES if e not in barred]
+        if envelope is None:
+            return allowed[0]
+        if envelope in barred:
+            label = SERVICES.get(service, {}).get("label", service)
+            raise ValueError(
+                f"{label} cannot go in a {envelope.upper()} envelope. Use "
+                f"--envelope {allowed[0]}, or leave --envelope out and the smallest "
+                "envelope it can use is picked.")
+        return envelope
 
     def draft(self, *, source, recipients, service, reference=None,
               testmode=True, **options) -> Draft:
