@@ -323,6 +323,48 @@ class TestRefresh(unittest.TestCase):
         self.assertEqual(prov.calls, [])
 
 
+class TestLogTotal(unittest.TestCase):
+    """The "spent live" total used to be summed over the letters shown, so
+    with more than --limit letters it understated what was spent."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self._tmp.name) / ".pennyblack"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def letters(self, count, testmode=False, pence=100):
+        for n in range(count):
+            ledger.record({"id": f"print_{testmode}_{n}", "service": "second",
+                           "cost_pence": pence, "recipients": ["Acme Ltd"],
+                           "testmode": testmode}, log_dir=self.log_dir)
+
+    def log(self, *extra):
+        code, out, err = run(["log", "--log-dir", str(self.log_dir), *extra])
+        self.assertEqual(code, 0, err)
+        return out
+
+    def test_the_total_counts_every_live_letter_not_just_those_shown(self):
+        self.letters(25)
+        out = self.log()
+        self.assertIn("25 letter(s) recorded, £25.00 spent live", out)
+        self.assertIn("showing the last 20 of 25", out)
+
+    def test_the_total_does_not_depend_on_the_limit(self):
+        self.letters(25)
+        self.assertIn("£25.00 spent live", self.log("--limit", "3"))
+
+    def test_test_letters_are_left_out_of_the_total(self):
+        self.letters(3)
+        self.letters(30, testmode=True, pence=500)
+        self.assertIn("33 letter(s) recorded, £3.00 spent live", self.log())
+
+    def test_no_note_when_everything_is_shown(self):
+        self.letters(5)
+        self.assertNotIn("showing the last", self.log())
+
+
 class TestUkDates(unittest.TestCase):
     def test_dates_are_uk_time_not_utc(self):
         # 23:30 UTC on 17 Sep 2026 is 00:30 on 18 Sep in London (BST).
