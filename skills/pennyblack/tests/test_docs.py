@@ -225,5 +225,13 @@ class TestLiveFromTheStart(unittest.TestCase):
         self.assertIn("`posted: false`", text)
 
 
+class TestApprovedCost(unittest.TestCase):
+    def test_skill_md_tells_the_agent_to_pass_the_approved_cost(self):
+        section = _section(SKILL_MD, "posting a letter")
+        text = " ".join(section.split()).lower()
+        self.assertIn("always pass `--expect-cost`", text)
+        self.assertIn("--expect-cost", text[text.index("4. send it"):])
+
+
 if __name__ == "__main__":
     unittest.main()

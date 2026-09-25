@@ -108,8 +108,13 @@ both are there is not documented.
 **4. Send it, only once they have said so.**
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" send print_YheDXex1cHsyD9xosrgZu
+python3 "${CLAUDE_SKILL_DIR}/scripts/pennyblack.py" send print_YheDXex1cHsyD9xosrgZu \
+  --expect-cost 5.21
 ```
+
+**Always pass `--expect-cost`**, with the cost including VAT that the user
+approved. If the job's cost has changed since they saw it, `send` refuses and
+posts nothing. Show them the new cost and wait again.
 
 Or bin the draft with `cancel print_...`. Nothing was printed or charged.
 
@@ -250,6 +255,10 @@ public one. The README written into the folder says so and gives the
   line in the envelope window; a single comma-joined string prints as one long line and
   wraps mid-address. Never put the postcode in it - that is `--postcode`.
 - `--to-file recipients.json` - `{"name":..., "line": "..." or ["...", "..."], "postcode":...}` or a list.
+  More than 5 recipients is refused. The draft shows how many letters one `send` posts.
+- `--max-recipients N` - allow up to N recipients. Only when the user has said they
+  want every one of them posted.
+- `--expect-cost 5.21` (on `send`) - the cost inc VAT the user approved. See step 4.
 - `--address-from-pdf` - no recipient; the provider reads the address from page 1 of
   the PDF. Use it only when the PDF already has the address in the window position.
 - `--background-first` / `--background-other` - letterhead ids, if the account
@@ -263,7 +272,8 @@ public one. The README written into the folder says so and gives the
 - **Email.** If the recipient reads email, post is slower and costs money.
 - **Bulk mailshots.** The API supports mailing lists and thousands of recipients
   per call; this skill deliberately does not, because show-it-and-confirm does
-  not make sense for a mailshot.
+  not make sense for a mailshot. `draft` refuses more than 5 recipients unless
+  `--max-recipients` is given.
 - **Anything that is not already a PDF.** Export it first.
 
 ## Providers

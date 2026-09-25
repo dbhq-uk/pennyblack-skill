@@ -15,6 +15,7 @@ that is not an oversight. Physical post cannot be recalled once it is printed.
 """
 
 import argparse
+import decimal
 import json
 import os
 import sys
@@ -61,6 +62,12 @@ def _date(stamp):
     """A UNIX timestamp as a UK date, or an empty string if there is none."""
     when = ledger.uk_time(stamp)
     return when.strftime("%d %b %Y") if when else ""
+
+
+#: More recipients than this in one draft is refused unless --max-recipients
+#: says otherwise. One `send` posts a letter to every recipient on the job, and
+#: bulk mail is something this skill deliberately does not do.
+MAX_RECIPIENTS = 5
 
 
 #: A sent letter is checked by `log --refresh` for this long after it was
@@ -112,6 +119,11 @@ def _is_open(entry, entries, now):
     return False
 
 
+def _recipient_count(draft):
+    """How many letters one send of this draft posts."""
+    return max(len(draft.addresses), len(draft.recipients))
+
+
 def _address_lines(address):
     """An address as it will read in the envelope window, one line each."""
     lines = [address.name] + (address.line or "").splitlines() + [address.postcode]
@@ -151,6 +163,7 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
             "pages": draft.pages,
             "sheets": draft.sheets,
             "recipients": draft.recipients,
+            "recipient_count": _recipient_count(draft),
             "addresses": [_address_lines(a) for a in draft.addresses],
             "address_from_pdf": address_from_pdf,
             "cost_pence": draft.cost.total_pence,
@@ -176,6 +189,9 @@ def _describe_draft(draft, as_json=False, preview_file=None, warnings=(),
             print("             (the address the provider read from page 1 of the PDF)")
     else:
         print(f"  to         {', '.join(draft.recipients) or '(none)'}")
+    count = _recipient_count(draft)
+    print(f"  letters    {count} - one to each recipient, and send posts them all"
+          if count != 1 else "  letters    1")
     print(f"  service    {meta.get('label', draft.service)}")
     if envelope:
         print(f"  envelope   {envelope.upper()}")
@@ -332,6 +348,17 @@ def _parse_recipient(args):
                 country=e.get("country", "GB"),
             )
             out.append(_checked(addr))
+        cap = getattr(args, "max_recipients", None)
+        if cap is None:
+            cap = MAX_RECIPIENTS
+        elif cap < 1:
+            fail("--max-recipients must be 1 or more")
+        if len(out) > cap:
+            fail(f"{args.to_file} has {len(out)} recipients. One send posts a letter to "
+                 f"each of them, and more than {cap} is refused.\n"
+                 "  This skill does not do bulk mail. If the user really wants all of them,\n"
+                 f"  check with them, then pass --max-recipients {len(out)}.\n"
+                 "  Nothing was uploaded.")
         return out
 
     missing = [f for f in ("name", "line", "postcode") if not getattr(args, f, None)]
@@ -417,6 +444,21 @@ def _send_entry(draft):
     return entry
 
 
+def _pence(amount):
+    """'5.21', '£5.21' or '5' as whole pence, or a ValueError."""
+    text = str(amount).strip().lstrip("£").replace(",", "")
+    try:
+        value = decimal.Decimal(text)
+    except decimal.InvalidOperation:
+        raise ValueError(f"--expect-cost {amount!r} is not an amount. "
+                         "Give it in pounds, like 5.21.") from None
+    pence = value * 100
+    if not value.is_finite() or value < 0 or pence != pence.to_integral_value():
+        raise ValueError(f"--expect-cost {amount!r} is not an amount in pounds and "
+                         "pence. Give it like 5.21.")
+    return int(pence)
+
+
 def cmd_send(args):
     conf = cfg.load()
     prov = providers.get(conf)
@@ -436,6 +478,14 @@ def cmd_send(args):
         recovered = True
         draft = before
     else:
+        # The price the user approved, bound to the job that is confirmed. If
+        # the job changed after they saw it, they have not approved this one.
+        if args.expect_cost is not None:
+            expected = _pence(args.expect_cost)
+            if before.cost.total_pence != expected:
+                fail(f"{args.id} now costs {before.cost}, not the "
+                     f"£{expected / 100:.2f} that was approved. Nothing was posted.\n"
+                     "  Show the user the new cost, and send only if they approve it.")
         if not args.yes and sys.stdin.isatty():
             where = ", ".join(before.recipients) or "the address on the draft"
             if before.testmode:
@@ -772,6 +822,9 @@ def build_parser():
     s.add_argument("--postcode", help="recipient postcode")
     s.add_argument("--country", default="GB", help="ISO country code (default: GB)")
     s.add_argument("--to-file", help="JSON file with one recipient or a list of them")
+    s.add_argument("--max-recipients", type=int, metavar="N",
+                   help=f"allow more than {MAX_RECIPIENTS} recipients in --to-file, "
+                        "up to N. Only with the user's say-so")
     s.add_argument("--address-from-pdf", action="store_true",
                    help="give no recipient, and let the provider read the address "
                         "from the envelope window on page 1 of the PDF")
@@ -792,6 +845,9 @@ def build_parser():
     s = sub.add_parser("send", parents=[common], help="confirm a draft - this posts it and charges you")
     s.add_argument("id")
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s.add_argument("--expect-cost", metavar="POUNDS",
+                   help="the cost inc VAT the user approved, like 5.21. send refuses, "
+                        "and posts nothing, if the job's cost is different")
     s.add_argument("--log-dir", help="where to keep the record "
                    "(default: <git root>/.pennyblack)")
     s.set_defaults(func=cmd_send)

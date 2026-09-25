@@ -33,6 +33,13 @@ and reconsider the change.
 
 **Drafts default to test mode.** `--live` is opt-in. Do not flip the default.
 
+**`send` can be bound to the price the user approved, and a draft is capped at
+5 recipients.** `send --expect-cost` compares the job's cost inc VAT to the
+penny before confirming, and refuses on any difference. `draft` refuses more
+than `MAX_RECIPIENTS` unless `--max-recipients` is given, because one `send`
+posts to every recipient on the job. Do not raise the cap or loosen the
+comparison to make something convenient.
+
 **A test send never reads as posted.** `send` on a test draft leads with
 `TEST - NOT POSTED`, returns `posted: false` in `--json`, and is recorded in
 `test.jsonl`, never `sent.jsonl`, so a test cannot be counted or reported as a
