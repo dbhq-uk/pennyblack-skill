@@ -1,6 +1,6 @@
 ---
 name: pennyblack
-description: Post a PDF as a physical letter in the UK, printed and delivered by Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, and returns the Royal Mail tracking number. Use when the user wants to put a PDF in the post, send a letter by Royal Mail, send something by recorded or signed-for delivery, write to someone by post rather than email, or check the status or tracking number of a letter sent with it. Not for social media posts or for posting entries to accounts. Trigger on phrases like "put this in the post", "post this letter", "send this by post", "send it recorded delivery", "send it signed for", "special delivery", "Royal Mail", "track that letter".
+description: Post a PDF as a physical letter in the UK, printed and delivered by Royal Mail. Supports Signed For, Tracked 24/48 and Special Delivery, and returns the Royal Mail tracking number. Use when the user wants to put a PDF in the post, send a letter by Royal Mail, send something by recorded, signed-for or special delivery, write to someone by post rather than email, or check the status or tracking number of a letter sent with it. Not for social media posts or for posting entries to accounts.
 ---
 
 # pennyblack
